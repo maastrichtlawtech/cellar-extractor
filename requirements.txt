@@ -1,0 +1,8 @@
+# For cellar extractor
+xmltodict
+requests
+beautifulsoup4
+tqdm
+SPARQLWrapper
+pandas
+

@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellar-extractor"
+readme = {file = "README.md", content-type = "text/markdown"}
+version = "1.2.3"
+requires-python = ">= 3.9"
+description = "Library for extracting CELLAR case law data from EUR-Lex"
+authors = [
+    { name = "LawTech Lab", email = "law-techlab@maastrichtuniversity.nl" }
+]
+license = {text = "Apache-2.0"}
+keywords = ["cellar", "extractor", "eurlex", "legal", "case-law", "sparql", "ecli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Legal Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "beautifulsoup4",
+    "SPARQLWrapper",
+    "requests",
+    "pandas",
+    "xmltodict",
+    "tqdm"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/maastrichtlawtech/cellar-extractor"
+"Bug Tracker" = "https://github.com/maastrichtlawtech/cellar-extractor/issues"
+"Documentation" = "https://github.com/maastrichtlawtech/cellar-extractor/blob/main/README.md"
+"Source Code" = "https://github.com/maastrichtlawtech/cellar-extractor"
+
+[tool.setuptools.packages.find]
+include = ["cellar_extractor"]
+namespaces = false
