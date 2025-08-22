@@ -65,8 +65,8 @@ def execute_sections_threads(
             full.append(json_text)
         summary = get_summary_html(_id)
         if summary != "No summary available":
-            text = get_keywords_from_html(summary, id[0])
-            text2 = get_summary_from_html(summary, id[0])
+            text = get_keywords_from_html(summary, _id[0])
+            text2 = get_summary_from_html(summary, _id[0])
             key[j] = text
             _sum[j] = text2
         else:
