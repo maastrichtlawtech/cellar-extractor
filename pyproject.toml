@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cellar-extractor"
 readme = {file = "README.md", content-type = "text/markdown"}
-version = "1.2.3"
+version = "1.2.4"
 requires-python = ">= 3.9"
 description = "Library for extracting CELLAR case law data from EUR-Lex"
 authors = [
