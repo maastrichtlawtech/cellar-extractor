@@ -31,10 +31,10 @@ class FetchOperativePart:
             self.sparql.setReturnFormat(JSON)
             self.sparql.setQuery(
                 """
-            PREFIX cdm: <http://publications.europa.eu/ontology/cdm#> 
+            PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
             PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
             SELECT ?operative
-            WHERE { 
+            WHERE {
                 ?doc cdm:manifestation_case-law_operative_part ?operative ;
                      owl:sameAs ?w .
                 FILTER (?w = <http://publications.europa.eu/resource/celex/%s.ENG.txt>)
