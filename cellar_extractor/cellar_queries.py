@@ -37,7 +37,7 @@ def get_all_eclis(starting_date=None, ending_date=None):
         order by asc(?ecli)
     """
         % (
-            "http://publications.europa.eu/ontology/cdm/dateLastModification",
+            "http://publications.europa.eu/ontology/cdm#work_date_document",
             f'FILTER(STR(?date) >= "{starting_date}")' if starting_date else "",
             f'FILTER(STR(?date) <= "{ending_date}")' if ending_date else "",
         )
