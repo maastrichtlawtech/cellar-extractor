@@ -137,7 +137,7 @@ def execute_citations_webservice(dictionary_list, celexes, username, password):
                         dictionary_list.append(dictionary)
                         success += 1
                         failure = True
-                    except:
+                    except Exception:
                         retry += 1
                         # logging.info(response.content)
                         time.sleep(0.5)
