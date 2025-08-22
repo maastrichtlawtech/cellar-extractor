@@ -122,9 +122,7 @@ def get_raw_cellar_metadata(
     for res in ret["results"]["bindings"]:
         ecli = res["ecli"]["value"]
         # We only want cdm predicates
-        if not res["p"]["value"].startswith(
-            "http://publications.europa.eu/ontology/cdm"
-        ):
+        if not res["p"]["value"].startswith("http://publications.europa.eu/ontology/cdm"):
             continue
 
         # Check if we have predicate labels

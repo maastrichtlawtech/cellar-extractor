@@ -235,7 +235,7 @@ def get_words_from_keywords(text):
     if "Keywords" in text:
         try:
             index = text.find("Keywords")
-            if "Summary" in text[index:index + 25]:
+            if "Summary" in text[index : index + 25]:
                 text2 = text.replace("Summary", "", 1)
                 try:
                     indexer = text2.find("Summary")
@@ -348,7 +348,7 @@ def get_subject(text):
             )  # if this fails then miscellaneous
         except Exception:
             index_end = text.index("Miscellaneous information")
-        extracting = text[index_matter + 16:index_end]
+        extracting = text[index_matter + 16 : index_end]
         subject_mat = extracting.split(sep="\n")
         subject = ";".join(subject_mat)
         subject = subject[: len(subject) - 1]
@@ -397,7 +397,7 @@ def get_codes(text):
     try:
         index_codes = text.index("Case law directory code:")
         index_end = text.index("Miscellaneous information")
-        extracting = text[index_codes + 20:index_end]
+        extracting = text[index_codes + 20 : index_end]
         extracting = extracting.rstrip()
         words = extracting.split()
         codes = [x for x in words if is_code(x)]
@@ -436,7 +436,7 @@ def get_advocate_or_judge(text, phrase):
     """
     try:
         index_matter = text.index(phrase)
-        extracting = text[index_matter + len(phrase):]
+        extracting = text[index_matter + len(phrase) :]
         extracting = extracting.replace("\n", "", 1)
         ending = extracting.find("\n")
         extracting = extracting[:ending]
@@ -458,7 +458,7 @@ def get_case_affecting(text):
     phrase = "Case affecting:"
     try:
         index_matter = text.index(phrase)
-        extracting = text[index_matter + len(phrase):]
+        extracting = text[index_matter + len(phrase) :]
         extracting = extracting.replace("\n", "", 1)
         phrases = extracting.split(sep="\n")
         full_strings = []
@@ -492,7 +492,7 @@ def get_citations_with_extra_info(text):
     data_list = []
     try:
         index_matter = text.index(phrase)
-        extracting = text[index_matter + len(phrase):]
+        extracting = text[index_matter + len(phrase) :]
         extracting = extracting.replace("\n", "", 1)
         sentences = extracting.splitlines()
         for line in sentences:

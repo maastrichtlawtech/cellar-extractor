@@ -2,18 +2,19 @@ import json
 import threading
 import time
 import pandas as pd
-from cellar_extractor.eurlex_scraping import (get_html_text_by_celex_id,
-                                              get_full_text_from_html,
-                                              get_summary_html,
-                                              get_keywords_from_html,
-                                              get_summary_from_html,
-                                              get_entire_page,
-                                              get_codes,
-                                              get_eurovoc,
-                                              get_advocate_or_judge,
-                                              get_case_affecting,
-                                              get_citations_with_extra_info
-                                              )
+from cellar_extractor.eurlex_scraping import (
+    get_html_text_by_celex_id,
+    get_full_text_from_html,
+    get_summary_html,
+    get_keywords_from_html,
+    get_summary_from_html,
+    get_entire_page,
+    get_codes,
+    get_eurovoc,
+    get_advocate_or_judge,
+    get_case_affecting,
+    get_citations_with_extra_info,
+)
 from tqdm import tqdm
 
 
@@ -157,8 +158,8 @@ def add_sections(data, threads, json_filepath=None):
     list_affecting_str = []
     list_citations_extra = []
     for i in range(0, length, at_once_threads):
-        curr_celex = celex[i: (i + at_once_threads)]
-        curr_ecli = eclis[i: (i + at_once_threads)]
+        curr_celex = celex[i : (i + at_once_threads)]
+        curr_ecli = eclis[i : (i + at_once_threads)]
         t = threading.Thread(
             target=execute_sections_threads,
             args=(

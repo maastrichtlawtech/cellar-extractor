@@ -167,7 +167,6 @@ class FetchOperativePart:
         p = parser.find_all("p")
         five = []
         for para in p:
-
             span = para.find("span")
             if span is not None:
                 if "operative" in span.text.lower():
@@ -200,7 +199,6 @@ class FetchOperativePart:
             if h2.text == "Operative part":
                 operatives = h2.find_all_next("p")
                 for operative in operatives:
-
                     six.append(operative.text)
         return six
 
@@ -235,8 +233,7 @@ class FetchOperativePart:
                                         if _all is not None:
                                             # find operative part
                                             # within the span
-                                            span = _all.find_all("span",
-                                                                 class_="bold")
+                                            span = _all.find_all("span", class_="bold")
                                             for spans in span:
                                                 # Append it into a list and
                                                 # return the
@@ -266,8 +263,7 @@ class FetchOperativePart:
                         for paras in p:
                             if paras is not None:
                                 if "on those grounds" in paras.text.lower():
-                                    span = paras.find_all_next("span",
-                                                               class_="bold")
+                                    span = paras.find_all_next("span", class_="bold")
                                     for spans in span:
                                         if spans is not None:
                                             eight.append(spans.text)
@@ -328,14 +324,12 @@ class FetchOperativePart:
         parser = BeautifulSoup(website, "html.parser")
         appender = []
         for string in parser.stripped_strings:
-
             appender.append(string)
 
         found = False
         after_grounds = []
 
         for x in appender:
-
             if "on those grounds" in x.lower():
                 found = True
 

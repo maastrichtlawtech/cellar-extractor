@@ -1,7 +1,6 @@
 def extract_containing_subject_matter(df, phrase):
     returner = df[
-        df["LEGAL RESOURCE IS ABOUT SUBJECT MATTER"].str.contains(phrase,
-                                                                  na=False)
+        df["LEGAL RESOURCE IS ABOUT SUBJECT MATTER"].str.contains(phrase, na=False)
     ]
     return returner
 

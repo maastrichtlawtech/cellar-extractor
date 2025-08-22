@@ -3,11 +3,7 @@ from cellar_extractor.fulltext_saving import add_sections
 from cellar_extractor.citations_adder import add_citations_separate_webservice
 
 
-def extra_cellar(data=None,
-                 filepath=None,
-                 threads=10,
-                 username="",
-                 password=""):
+def extra_cellar(data=None, filepath=None, threads=10, username="", password=""):
     """
     Extracts information from a cellar dataset.
 

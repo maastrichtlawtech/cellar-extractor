@@ -3,7 +3,6 @@ from bs4 import BeautifulSoup
 
 
 class CellarSparqlQuery:
-
     def __init__(self):
         # Set the SPARQL endpoint
         _url = "https://publications.europa.eu/webapi/rdf/sparql"

@@ -5,4 +5,5 @@ from cellar_extractor.cellar import filter_subject_matter
 from cellar_extractor.operative_extractions import FetchOperativePart
 from cellar_extractor.operative_extractions import Writing
 import logging
+
 logging.basicConfig(level=logging.INFO)

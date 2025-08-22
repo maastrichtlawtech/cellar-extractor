@@ -12,9 +12,7 @@ from cellar_extractor.json_to_csv import json_to_csv_main, json_to_csv_returning
 from cellar_extractor.nodes_and_edges import get_nodes_and_edges
 
 
-def get_cellar(
-    ed=None, save_file="y", max_ecli=100, sd="2022-05-01", file_format="csv"
-):
+def get_cellar(ed=None, save_file="y", max_ecli=100, sd="2022-05-01", file_format="csv"):
     if not ed:
         ed = datetime.now().isoformat(timespec="seconds")
     file_name = "cellar_" + sd + "_" + ed

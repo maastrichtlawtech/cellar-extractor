@@ -13,8 +13,10 @@ def extract_rows(data, number):
     try:
         output = data[1:number]
     except Exception:
-        logging.info(f"The file does not have {number} entries,\
-                     returning entire file.")
+        logging.info(
+            f"The file does not have {number} entries,\
+                     returning entire file."
+        )
         output = data
     return output
 
