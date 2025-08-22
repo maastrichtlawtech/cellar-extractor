@@ -117,7 +117,7 @@ jobs:
           packages-dir: dist/
 
   pypi-publish:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/cellar'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
@@ -137,7 +137,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   github-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/cellar'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     name: Sign the Python distribution with Sigstore and upload them to GitHub Releases
     needs:
       - pypi-publish
@@ -167,7 +167,7 @@ jobs:
           gh release create \
           'cellar-extractor-${{ env.RELEASE_VERSION }}' \
           --repo '${{ github.repository }}' \
-          --target 'cellar' \
+          --target 'main' \
           --notes ""
 
       - name: Upload artifact signatures to Github release
