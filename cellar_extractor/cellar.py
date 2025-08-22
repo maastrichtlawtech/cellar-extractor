@@ -96,7 +96,7 @@ def get_nodes_and_edges_lists(df=None, only_local=False):
         return
     try:
         nodes, edges = get_nodes_and_edges(df, only_local)
-    except:
+    except Exception:
         logging.warning("Something went wrong. Nodes and edges creation unsuccessful.")
         return False, False
     return nodes, edges
