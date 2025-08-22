@@ -33,7 +33,6 @@ jobs:
           ignore: E501,F401,BLK100
           path: "cellar_extractor"
           plugins: "flake8-bugbear>=23.1.20 flake8-black"
-          flake8-version: ">=5.0.0"
 
       
   test:
