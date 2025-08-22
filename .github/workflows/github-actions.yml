@@ -2,9 +2,9 @@ name: Build, Test, Lint & Upload to TestPyPI and PyPI for Cellar_Extractor
 
 on:
   push:
-    branches: [ cellar ]
+    branches: [ main ]
   pull_request:
-    branches: [ cellar ]
+    branches: [ main ]
 env:
   RELEASE_VERSION: 1.2.4
 
