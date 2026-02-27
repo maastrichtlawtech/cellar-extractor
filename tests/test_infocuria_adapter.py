@@ -159,5 +159,9 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
     assert data["advocate"] == "Kokott"
     assert data["judge"] == "Spielmann"
     assert data["affecting_ids"] == "C-2/20"
+    assert data["sector"] == "6"
+    assert data["text_source"] == "INFOCURIA_BLOB_HTML"
+    assert data["summary_source"] == "INFOCURIA_DOCUMENT_CONTENT"
+    assert data["missing_reasons"] == ""
     assert "316845-EN-1.html" in requested_urls[0]
     eurlex_scraping._get_case_data_cached.cache_clear()

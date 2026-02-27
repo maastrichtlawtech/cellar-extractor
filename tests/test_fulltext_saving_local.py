@@ -72,3 +72,35 @@ def test_add_sections_writes_valid_json_file_with_multiple_threads(monkeypatch, 
     written = json.loads(output_file.read_text(encoding="utf-8"))
     assert isinstance(written, list)
     assert len(written) == 12
+
+
+def test_add_sections_marks_missing_reasons_for_empty_infocuria_fields(monkeypatch):
+    monkeypatch.setattr(
+        fulltext_saving,
+        "get_case_data_by_celex_id",
+        lambda _id, language="EN": {
+            "text": "",
+            "html": "",
+            "summary": "",
+            "keywords": "",
+            "eurovoc": "",
+            "directory_codes": "",
+            "advocate": "",
+            "judge": "",
+            "affecting_ids": "",
+            "affecting_strings": "",
+            "citations_extra": "",
+            "text_source": "",
+            "summary_source": "",
+            "missing_reasons": "UNAVAILABLE_UPSTREAM",
+        },
+    )
+    data = pd.DataFrame({"CELEX IDENTIFIER": ["82010AT0127(51)"], "ECLI": ["E1"]})
+
+    fulltext = fulltext_saving.add_sections(data, threads=1)
+
+    assert data.loc[0, "celex_summary"] == ""
+    reasons = data.loc[0, "missing_reasons"]
+    assert "FULLTEXT_UNAVAILABLE_UPSTREAM" in reasons
+    assert "SUMMARY_UNAVAILABLE_UPSTREAM" in reasons
+    assert fulltext[0]["text"] == ""
