@@ -21,6 +21,7 @@ from tqdm import tqdm
 def execute_sections_threads(
     celex,
     eclis,
+    source_indices,
     start,
     list_sum,
     list_key,
@@ -54,8 +55,9 @@ def execute_sections_threads(
     citations_extra = pd.Series([], dtype="string")
     for i in range(len(celex)):
         j = start + i
-        _id = celex[j]
-        ecli = eclis[j]
+        row_index = source_indices[j]
+        _id = celex.iloc[i]
+        ecli = eclis.iloc[i]
         html = get_html_text_by_celex_id(_id)
         if html != "404":
             text = get_full_text_from_html(html)
@@ -68,11 +70,11 @@ def execute_sections_threads(
         if summary != "No summary available":
             text = get_keywords_from_html(summary, _id[0])
             text2 = get_summary_from_html(summary, _id[0])
-            key[j] = text
-            _sum[j] = text2
+            key[row_index] = text
+            _sum[row_index] = text2
         else:
-            key[j] = ""
-            _sum[j] = ""
+            key[row_index] = ""
+            _sum[row_index] = ""
         entire_page = get_entire_page(_id)
         text = get_full_text_from_html(entire_page)
         if entire_page != "No data available":
@@ -91,13 +93,13 @@ def execute_sections_threads(
             strings_affecting = ""
             citation_extra = ""
 
-        eurovocs[j] = eurovoc
-        case_codes[j] = code
-        adv_general[j] = adv
-        affecting_id[j] = ids_affecting
-        affecting_str[j] = strings_affecting
-        judge_rapporteur[j] = judge
-        citations_extra[j] = citation_extra
+        eurovocs[row_index] = eurovoc
+        case_codes[row_index] = code
+        adv_general[row_index] = adv
+        affecting_id[row_index] = ids_affecting
+        affecting_str[row_index] = strings_affecting
+        judge_rapporteur[row_index] = judge
+        citations_extra[row_index] = citation_extra
         progress_bar.update(1)
 
     list_sum.append(_sum)
@@ -130,14 +132,15 @@ def add_sections(data, threads, json_filepath=None):
     It operates with multiple threads, using that feature is recommended
     as it speeds up the entire process.
     """
-    celex = data.loc[:, "CELEX IDENTIFIER"]
-    eclis = data.loc[:, "ECLI"]
+    source_indices = data.index.tolist()
+    celex = data.loc[:, "CELEX IDENTIFIER"].reset_index(drop=True)
+    eclis = data.loc[:, "ECLI"].reset_index(drop=True)
     length = celex.size
     time.sleep(1)
     _bar = tqdm(
         total=length,
         colour="GREEN",
-        miniters=int(length / 100),
+        miniters=max(1, int(length / 100)) if length else 1,
         position=0,
         leave=True,
         maxinterval=10000,
@@ -165,6 +168,7 @@ def add_sections(data, threads, json_filepath=None):
             args=(
                 curr_celex,
                 curr_ecli,
+                source_indices,
                 i,
                 list_sum,
                 list_key,
@@ -193,16 +197,14 @@ def add_sections(data, threads, json_filepath=None):
     add_column_frow_list(data, "affecting_ids", list_affecting_id)
     add_column_frow_list(data, "affecting_strings", list_affecting_str)
     add_column_frow_list(data, "citations_extra_info", list_citations_extra)
+    json_file = []
+    for _item in list_full:
+        if len(_item) > 0:
+            json_file.extend(_item)
     if json_filepath:
         with open(json_filepath, "w", encoding="utf-8") as f:
-            for _item in list_full:
-                if len(_item) > 0:
-                    json.dump(_item, f)
+            json.dump(json_file, f)
     else:
-        json_file = []
-        for _item in list_full:
-            if len(_item) > 0:
-                json_file.extend(_item)
         return json_file
 
 
