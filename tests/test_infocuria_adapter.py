@@ -40,6 +40,27 @@ def test_choose_best_document_prefers_target_language():
     assert selected["logicDocId"] == "id_2"
 
 
+def test_extract_summary_from_documents_prefers_summary_marker():
+    docs = [
+        {
+            "content": {
+                "docTypeCode": "ARRET",
+                "contentML": [{"en": "Judgment content without marker"}],
+            }
+        },
+        {
+            "content": {
+                "docTypeCode": "DDP",
+                "contentML": [{"en": "Header\nSummary of the request\nBody"}],
+            }
+        },
+    ]
+
+    summary = eurlex_scraping._extract_summary_from_documents(docs, language="en")
+
+    assert summary.startswith("Summary")
+
+
 def test_get_entire_page_uses_infocuria_data(monkeypatch):
     monkeypatch.setattr(
         eurlex_scraping,
@@ -100,6 +121,11 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
                                             "logicDocId": "id_316845",
                                             "idProcedure": "C/0131/24/00000000RP/01/P/01",
                                             "docTypeCode": "ARRET",
+                                            "contentML": [
+                                                {
+                                                    "en": "Preface\nSummary of the case\nAdditional lines"
+                                                }
+                                            ],
                                         }
                                     }
                                 ]
@@ -127,6 +153,7 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
     data = eurlex_scraping.get_case_data_by_celex_id("62024CJ0131", language="EN")
 
     assert data["html"] != ""
+    assert data["summary"].startswith("Summary")
     assert data["keywords"] == "Environment"
     assert data["directory_codes"] == "ENVI"
     assert data["advocate"] == "Kokott"

@@ -27,6 +27,7 @@ def test_infocuria_case_data_live():
     data = get_case_data_by_celex_id("62024CJ0131", language="EN")
     assert data is not None
     assert len(data["html"]) > 1000
+    assert len(data["summary"]) > 100
     assert data["directory_codes"] != ""
 
 

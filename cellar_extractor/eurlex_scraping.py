@@ -95,6 +95,48 @@ def _extract_labels(entries, language="en"):
     return list(dict.fromkeys([label.strip() for label in labels if label.strip()]))
 
 
+def _extract_text_by_language(multilingual_entries, language="en"):
+    lang = language.lower()
+    for item in multilingual_entries or []:
+        if isinstance(item, dict):
+            value = item.get(lang)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    for item in multilingual_entries or []:
+        if isinstance(item, dict):
+            for value in item.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return ""
+
+
+def _extract_summary_from_documents(doc_hits, language="en"):
+    type_priority = {
+        "DDP": 0,
+        "DDP_COMM": 1,
+        "CONCL": 2,
+        "ARRET": 3,
+        "ORDONNANCE": 4,
+    }
+    candidates = []
+    for hit in doc_hits or []:
+        content = hit.get("content", {}) if isinstance(hit, dict) else {}
+        summary_text = _extract_text_by_language(content.get("contentML"), language=language)
+        if summary_text == "":
+            continue
+        summary_lower = summary_text.lower()
+        marker_index = summary_lower.find("summary")
+        has_summary_marker = marker_index != -1
+        if has_summary_marker:
+            summary_text = summary_text[marker_index:]
+        doc_type = content.get("docTypeCode", "")
+        rank = (0 if has_summary_marker else 1, type_priority.get(doc_type, 99))
+        candidates.append((rank, summary_text))
+    if len(candidates) == 0:
+        return ""
+    return sorted(candidates, key=lambda item: item[0])[0][1].strip()
+
+
 def _resolve_name_by_code(code, entries, language="en"):
     if not isinstance(entries, list) or len(entries) == 0:
         return ""
@@ -214,6 +256,8 @@ def _get_case_data_cached(celex, language="EN"):
     if selected_doc is None:
         return None
 
+    summary_from_documents = _extract_summary_from_documents(documents, language="en")
+
     logic_doc_id = str(selected_doc["logicDocId"]).replace("id_", "")
     id_procedure = selected_doc["idProcedure"]
     proc_parts = id_procedure.split("/")
@@ -235,7 +279,9 @@ def _get_case_data_cached(celex, language="EN"):
 
     keywords = ";".join(_extract_labels(root_content.get("matCodeML"), language="en"))
     directory_codes = ";".join(root_content.get("matCode", []) or [])
-    summary = ";".join(_extract_labels(root_content.get("affObjectML"), language="en"))
+    summary = summary_from_documents or ";".join(
+        _extract_labels(root_content.get("affObjectML"), language="en")
+    )
     advocate = _resolve_name_by_code(
         root_content.get("avg"),
         root_content.get("advocateML"),
