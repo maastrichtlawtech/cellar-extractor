@@ -33,7 +33,8 @@ dependencies = [
     "requests",
     "pandas",
     "xmltodict",
-    "tqdm"
+    "tqdm",
+    "pypdf"
 ]
 
 [project.urls]

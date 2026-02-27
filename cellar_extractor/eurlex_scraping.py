@@ -1,10 +1,17 @@
+import io
 import time
 import re
 from functools import lru_cache
 import requests
 import xmltodict
+from SPARQLWrapper import JSON, POST, SPARQLWrapper
 
 from bs4 import BeautifulSoup
+
+try:
+    from pypdf import PdfReader
+except ImportError:  # pragma: no cover - handled in runtime fallback
+    PdfReader = None
 
 INFOCURIA_BASE = "https://infocuriaws.curia.europa.eu"
 INFOCURIA_SUGGEST = INFOCURIA_BASE + "/elastic-connector/suggest"
@@ -13,6 +20,50 @@ INFOCURIA_BLOB_HTML = (
     INFOCURIA_BASE
     + "/blob/download-file-html/{jurisdiction}/{year}/{process}/{file_name}"
 )
+CELLAR_SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
+
+LANG_AUTH_TO_SHORT = {
+    "BUL": "BG",
+    "CES": "CS",
+    "DAN": "DA",
+    "DEU": "DE",
+    "ELL": "EL",
+    "ENG": "EN",
+    "SPA": "ES",
+    "EST": "ET",
+    "FIN": "FI",
+    "FRA": "FR",
+    "GLE": "GA",
+    "HRV": "HR",
+    "HUN": "HU",
+    "ITA": "IT",
+    "LIT": "LT",
+    "LAV": "LV",
+    "MLT": "MT",
+    "NLD": "NL",
+    "POL": "PL",
+    "POR": "PT",
+    "RON": "RO",
+    "SLK": "SK",
+    "SLV": "SL",
+    "SWE": "SV",
+}
+LANG_SHORT_TO_AUTH = {v: k for k, v in LANG_AUTH_TO_SHORT.items()}
+
+SECTOR8_MAIN_FORMAT_ORDER = {
+    "xhtml": 0,
+    "html": 1,
+    "xml": 2,
+    "pdf": 3,
+    "pdfa2a": 3,
+}
+SECTOR8_SUMMARY_FORMAT_ORDER = {
+    "xhtml": 0,
+    "html": 1,
+    "pdf": 2,
+    "pdfa2a": 2,
+    "xml": 3,
+}
 
 LINK_SUMMARY_INF = (
     "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere&from=EN"
@@ -70,6 +121,277 @@ def _post_json(url, payload, retries=3):
     if last_error:
         raise RuntimeError(f"POST request failed for {url}") from last_error
     return None
+
+
+def _query_cellar_sparql(query, retries=3):
+    last_error = None
+    for _ in range(retries):
+        try:
+            sparql = SPARQLWrapper(CELLAR_SPARQL_ENDPOINT)
+            sparql.setReturnFormat(JSON)
+            sparql.setMethod(POST)
+            sparql.setQuery(query)
+            return sparql.queryAndConvert()
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.3)
+    if last_error:
+        raise RuntimeError("SPARQL query failed for CELLAR endpoint") from last_error
+    return None
+
+
+def _escape_sparql_literal(value):
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _authority_lang_to_short(authority_lang):
+    if authority_lang == "":
+        return ""
+    clean = authority_lang.upper()
+    return LANG_AUTH_TO_SHORT.get(clean, clean[:2])
+
+
+def _short_lang_to_authority(language):
+    if language == "":
+        return ""
+    clean = language.upper()
+    if len(clean) == 3:
+        return clean
+    return LANG_SHORT_TO_AUTH.get(clean, clean)
+
+
+def _extract_short_lang_from_uri(uri):
+    if not isinstance(uri, str) or uri == "":
+        return ""
+    authority = uri.rsplit("/", 1)[-1].upper()
+    return _authority_lang_to_short(authority)
+
+
+def _build_missing_reasons(text="", summary=""):
+    reasons = []
+    if text == "":
+        reasons.append("FULLTEXT_UNAVAILABLE_UPSTREAM")
+    if summary == "":
+        reasons.append("SUMMARY_UNAVAILABLE_UPSTREAM")
+    if text == "" and summary == "":
+        reasons.append("UNAVAILABLE_UPSTREAM")
+    return ";".join(reasons)
+
+
+def _parse_text_from_pdf(pdf_bytes):
+    if PdfReader is None:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+        text = "\n".join([page for page in pages if page != ""])
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def _extract_item_payload(item_url, format_hint):
+    try:
+        response = requests.get(item_url, timeout=60)
+    except Exception:
+        return "", "", ""
+    if response.status_code != 200:
+        return "", "", ""
+
+    hinted = (format_hint or "").lower()
+    content_type = str(response.headers.get("content-type", "")).lower()
+
+    if hinted in {"xhtml", "html", "xml"} or "html" in content_type or "xml" in content_type:
+        raw_markup = response.text
+        return get_full_text_from_html(raw_markup).strip(), raw_markup, hinted or "html"
+    if hinted in {"pdf", "pdfa2a"} or "pdf" in content_type:
+        return _parse_text_from_pdf(response.content), "", "pdf"
+    return "", "", hinted
+
+
+def _choose_best_sector8_item(candidates, language="EN", summary=False):
+    if len(candidates) == 0:
+        return None
+
+    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    filtered = [candidate for candidate in candidates if candidate.get("format") in format_order]
+    if len(filtered) == 0:
+        return None
+
+    language = language.upper()
+
+    def _rank(candidate):
+        candidate_lang = candidate.get("language", "")
+        if candidate_lang == language:
+            lang_rank = 0
+        elif candidate_lang == "":
+            lang_rank = 2
+        else:
+            lang_rank = 1
+        fmt_rank = format_order.get(candidate.get("format", ""), 99)
+        return (lang_rank, fmt_rank, candidate.get("item_url", ""))
+
+    return sorted(filtered, key=_rank)[0]
+
+
+def _fetch_sector8_work_uri(celex):
+    escaped = _escape_sparql_literal(celex)
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        select distinct ?doc
+        where {{
+            ?doc cdm:resource_legal_id_celex ?celex .
+            ?doc cdm:resource_legal_id_sector ?sector .
+            FILTER(STR(?celex) = "{escaped}")
+            FILTER(STR(?sector) = "8")
+        }}
+        order by asc(str(?doc))
+        limit 1
+    """
+    ret = _query_cellar_sparql(query)
+    rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
+    if len(rows) == 0:
+        return ""
+    return rows[0].get("doc", {}).get("value", "")
+
+
+def _fetch_sector8_summary_work_uris(work_uri):
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        select distinct ?summary
+        where {{
+            ?summary cdm:summary_summarizes_work <{work_uri}> .
+        }}
+        order by asc(str(?summary))
+    """
+    ret = _query_cellar_sparql(query)
+    rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
+    return [row.get("summary", {}).get("value", "") for row in rows if row.get("summary", {}).get("value", "") != ""]
+
+
+def _fetch_sector8_items_for_work(work_uri):
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        select distinct ?expr ?lang ?mtype ?item
+        where {{
+            ?expr cdm:expression_belongs_to_work <{work_uri}> .
+            OPTIONAL {{ ?expr cdm:expression_uses_language ?lang . }}
+            ?man cdm:manifestation_manifests_expression ?expr .
+            OPTIONAL {{ ?man cdm:manifestation_type ?mtype . }}
+            ?item cdm:item_belongs_to_manifestation ?man .
+        }}
+    """
+    ret = _query_cellar_sparql(query)
+    rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
+    candidates = []
+    for row in rows:
+        item_url = row.get("item", {}).get("value", "")
+        if item_url == "":
+            continue
+        mtype = str(row.get("mtype", {}).get("value", "")).lower()
+        lang_uri = row.get("lang", {}).get("value", "")
+        candidates.append(
+            {
+                "item_url": item_url,
+                "format": mtype,
+                "language": _extract_short_lang_from_uri(lang_uri),
+            }
+        )
+    return candidates
+
+
+def _fetch_sector8_subject_labels(work_uri, language="en"):
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        prefix skos: <http://www.w3.org/2004/02/skos/core#>
+        select distinct ?subject ?label
+        where {{
+            <{work_uri}> cdm:resource_legal_is_about_subject-matter ?subject .
+            OPTIONAL {{
+                ?subject skos:prefLabel ?label .
+                FILTER(lang(?label) = "{language}")
+            }}
+        }}
+    """
+    ret = _query_cellar_sparql(query)
+    rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
+    labels = []
+    for row in rows:
+        label = row.get("label", {}).get("value", "")
+        if label != "":
+            labels.append(label.strip())
+        else:
+            uri = row.get("subject", {}).get("value", "")
+            if uri != "":
+                labels.append(uri.rsplit("/", 1)[-1].strip())
+    return list(dict.fromkeys([label for label in labels if label != ""]))
+
+
+def _get_case_data_sector8(celex, language="EN"):
+    work_uri = _fetch_sector8_work_uri(celex)
+
+    text = ""
+    html = ""
+    text_source = ""
+    text_language = ""
+    text_format = ""
+    summary = ""
+    summary_source = ""
+    summary_language = ""
+    keywords = ""
+    eurovoc = ""
+
+    if work_uri != "":
+        subject_labels = _fetch_sector8_subject_labels(work_uri, language="en")
+        keywords = ";".join(subject_labels)
+        eurovoc = keywords
+
+        main_candidates = _fetch_sector8_items_for_work(work_uri)
+        best_main = _choose_best_sector8_item(main_candidates, language=language, summary=False)
+        if best_main is not None:
+            main_text, main_markup, normalized_format = _extract_item_payload(
+                best_main["item_url"], best_main["format"]
+            )
+            text = main_text
+            html = main_markup if main_markup != "" else (f"<pre>{main_text}</pre>" if main_text != "" else "")
+            text_source = "CELLAR_ITEM"
+            text_language = best_main.get("language", "")
+            text_format = normalized_format or best_main.get("format", "")
+
+        summary_candidates = []
+        for summary_work in _fetch_sector8_summary_work_uris(work_uri):
+            summary_candidates.extend(_fetch_sector8_items_for_work(summary_work))
+        best_summary = _choose_best_sector8_item(summary_candidates, language=language, summary=True)
+        if best_summary is not None:
+            summary_text, _, _ = _extract_item_payload(
+                best_summary["item_url"], best_summary["format"]
+            )
+            summary = summary_text
+            summary_source = "CELLAR_SUMMARY_ITEM" if summary != "" else ""
+            summary_language = best_summary.get("language", "") if summary != "" else ""
+
+    missing_reasons = _build_missing_reasons(text=text, summary=summary)
+
+    return {
+        "html": html,
+        "text": text,
+        "summary": summary,
+        "keywords": keywords,
+        "directory_codes": "",
+        "eurovoc": eurovoc,
+        "advocate": "",
+        "judge": "",
+        "affecting_ids": "",
+        "affecting_strings": "",
+        "citations_extra": "",
+        "text_source": text_source,
+        "text_language": text_language,
+        "text_format": text_format,
+        "summary_source": summary_source,
+        "summary_language": summary_language,
+        "sector": "8",
+        "missing_reasons": missing_reasons,
+    }
 
 
 def _extract_aff_id_from_suggest_identifier(identifier):
@@ -198,8 +520,7 @@ def _choose_best_document(doc_hits, language="EN"):
     return sorted(candidates, key=_rank)[0]
 
 
-@lru_cache(maxsize=2048)
-def _get_case_data_cached(celex, language="EN"):
+def _get_case_data_sector6(celex, language="EN"):
     normalized = _normalize_celex(celex)
     if not normalized.startswith("6"):
         return None
@@ -299,8 +620,17 @@ def _get_case_data_cached(celex, language="EN"):
     parties = root_content.get("parties", "")
     citations_extra = ";".join([val for val in [parties, result_labels] if val])
 
+    text = get_full_text_from_html(html) if html != "" else ""
+    if summary_from_documents != "":
+        summary_source = "INFOCURIA_DOCUMENT_CONTENT"
+    elif summary != "":
+        summary_source = "INFOCURIA_AFF_OBJECT"
+    else:
+        summary_source = ""
+
     return {
         "html": html,
+        "text": text,
         "summary": summary,
         "keywords": keywords,
         "directory_codes": directory_codes,
@@ -310,7 +640,26 @@ def _get_case_data_cached(celex, language="EN"):
         "affecting_ids": affecting_ids,
         "affecting_strings": affecting_ids,
         "citations_extra": citations_extra,
+        "text_source": "INFOCURIA_BLOB_HTML" if text != "" else "",
+        "text_language": str(doc_lang).upper() if doc_lang else language.upper(),
+        "text_format": "html" if text != "" else "",
+        "summary_source": summary_source,
+        "summary_language": "EN" if summary != "" else "",
+        "sector": "6",
+        "missing_reasons": _build_missing_reasons(text=text, summary=summary),
     }
+
+
+@lru_cache(maxsize=2048)
+def _get_case_data_cached(celex, language="EN"):
+    normalized = _normalize_celex(celex)
+    if normalized == "":
+        return None
+    if normalized.startswith("6"):
+        return _get_case_data_sector6(normalized, language=language)
+    if normalized.startswith("8"):
+        return _get_case_data_sector8(normalized, language=language)
+    return None
 
 
 def get_case_data_by_celex_id(celex, language="EN"):
@@ -553,7 +902,10 @@ def get_html_text_by_celex_id(id):
     if not info:
         return "404"
     html = info.get("html", "")
-    return html if html else "404"
+    if html:
+        return html
+    text = info.get("text", "")
+    return f"<pre>{text}</pre>" if text else "404"
 
 
 def get_entire_page(celex):
