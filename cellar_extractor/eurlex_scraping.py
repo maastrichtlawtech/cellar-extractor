@@ -1,9 +1,18 @@
 import time
 import re
+from functools import lru_cache
 import requests
 import xmltodict
 
 from bs4 import BeautifulSoup
+
+INFOCURIA_BASE = "https://infocuriaws.curia.europa.eu"
+INFOCURIA_SUGGEST = INFOCURIA_BASE + "/elastic-connector/suggest"
+INFOCURIA_PROCEDURES = INFOCURIA_BASE + "/elastic-connector/affairId/procedures"
+INFOCURIA_BLOB_HTML = (
+    INFOCURIA_BASE
+    + "/blob/download-file-html/{jurisdiction}/{year}/{process}/{file_name}"
+)
 
 LINK_SUMMARY_INF = (
     "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere&from=EN"
@@ -16,9 +25,256 @@ LINK_SUMMARY = (
     "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere_SUM&from=EN"
 )
 prog = re.compile(r"^[1234567890CE]\d{4}[A-Z]{1,2}\d{3,4}\d*")
+celex_case_pattern = re.compile(r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\d{1,4})")
 """
 Method for detecting code-words for case law directory codes for cellar.
 """
+
+
+def _normalize_celex(celex):
+    if celex != celex:
+        return ""
+    value = str(celex).replace(" ", "")
+    if ";" in value:
+        options = [part.strip() for part in value.split(";") if part.strip()]
+        non_inf = [part for part in options if "INF" not in part]
+        value = non_inf[0] if non_inf else options[0]
+    if "_" in value:
+        value = value.split("_")[0]
+    return value
+
+
+def _published_id_from_celex(celex):
+    match = celex_case_pattern.match(celex)
+    if not match:
+        return ""
+    year4 = match.group("year")
+    kind = match.group("kind")
+    number = int(match.group("num"))
+    court = kind[0] if kind and kind[0] in {"C", "T", "F"} else ""
+    if court == "":
+        return ""
+    return f"{court}-{number}/{year4[2:]}"
+
+
+def _post_json(url, payload, retries=3):
+    last_error = None
+    for _ in range(retries):
+        try:
+            response = requests.post(url, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json()
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.3)
+    if last_error:
+        raise RuntimeError(f"POST request failed for {url}") from last_error
+    return None
+
+
+def _extract_aff_id_from_suggest_identifier(identifier):
+    raw = identifier.split("-")[0]
+    match = re.match(r"(?P<aff_id>.+)/(?:P|R)/\d+$", raw)
+    if match:
+        return match.group("aff_id"), raw
+    return "", raw
+
+
+def _extract_labels(entries, language="en"):
+    labels = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("label"), list):
+            for item in entry.get("label"):
+                if isinstance(item, dict) and language in item:
+                    labels.append(item[language])
+        if language in entry and isinstance(entry[language], str):
+            labels.append(entry[language])
+    # Preserve order, remove duplicates.
+    return list(dict.fromkeys([label.strip() for label in labels if label.strip()]))
+
+
+def _resolve_name_by_code(code, entries, language="en"):
+    if not isinstance(entries, list) or len(entries) == 0:
+        return ""
+    selected = None
+    if code:
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("code") == code:
+                selected = entry
+                break
+    if selected is None:
+        selected = entries[0]
+    labels = _extract_labels([selected], language=language)
+    return ";".join(labels)
+
+
+def _collect_affecting_ids(content):
+    fields = [
+        "joinAffairs",
+        "pourvoiAffIds",
+        "originPourvoiIds",
+        "reExamenAffIds",
+        "originReExamanIds",
+        "transfertAffIds",
+        "originTransfertIds",
+    ]
+    ids = []
+    for field in fields:
+        vals = content.get(field)
+        if isinstance(vals, list):
+            ids.extend([str(val).strip() for val in vals if str(val).strip() != ""])
+    return ";".join(list(dict.fromkeys(ids)))
+
+
+def _choose_best_document(doc_hits, language="EN"):
+    candidates = []
+    for hit in doc_hits or []:
+        content = hit.get("content", {}) if isinstance(hit, dict) else {}
+        doc_formats = content.get("docFormats") or []
+        if "HTML" not in doc_formats:
+            continue
+        if not content.get("logicDocId") or not content.get("idProcedure"):
+            continue
+        candidates.append(content)
+    if len(candidates) == 0:
+        return None
+
+    type_priority = {
+        "ARRET": 0,
+        "ORDONNANCE": 1,
+        "CONCL": 2,
+    }
+
+    def _rank(doc):
+        lang_match = 0 if doc.get("docLang") == language else 1
+        doc_type = doc.get("docTypeCode", "")
+        priority = type_priority.get(doc_type, 99)
+        return (lang_match, priority)
+
+    return sorted(candidates, key=_rank)[0]
+
+
+@lru_cache(maxsize=2048)
+def _get_case_data_cached(celex, language="EN"):
+    normalized = _normalize_celex(celex)
+    if not normalized.startswith("6"):
+        return None
+    published_id = _published_id_from_celex(normalized)
+    if published_id == "":
+        return None
+
+    suggest_payload = {
+        "searchTerm": published_id,
+        "language": language,
+        "tabName": "jurisprudence",
+    }
+    suggest_response = _post_json(INFOCURIA_SUGGEST, suggest_payload)
+    if not isinstance(suggest_response, list) or len(suggest_response) == 0:
+        return None
+
+    procedure_info = None
+    for item in suggest_response:
+        info = item.get("procedureDocInfo", {}) if isinstance(item, dict) else {}
+        if str(info.get("idPublished", "")).startswith(published_id):
+            procedure_info = info
+            break
+    if procedure_info is None:
+        procedure_info = suggest_response[0].get("procedureDocInfo", {})
+
+    if not isinstance(procedure_info, dict) or procedure_info.get("id") is None:
+        return None
+
+    aff_id, _ = _extract_aff_id_from_suggest_identifier(procedure_info["id"])
+    if aff_id == "":
+        return None
+
+    procedures_payload = {
+        "affId": aff_id,
+        "searchTerm": published_id,
+        "tabName": "jurisprudence",
+        "language": language,
+    }
+    procedures = _post_json(INFOCURIA_PROCEDURES, procedures_payload)
+    hits = procedures.get("searchHits", []) if isinstance(procedures, dict) else []
+    if len(hits) == 0:
+        return None
+
+    root_hit = hits[0]
+    root_content = root_hit.get("content", {}) if isinstance(root_hit, dict) else {}
+    documents = (
+        root_hit.get("innerHits", {})
+        .get("document", {})
+        .get("searchHits", [])
+        if isinstance(root_hit, dict)
+        else []
+    )
+    selected_doc = _choose_best_document(documents, language=language)
+    if selected_doc is None:
+        return None
+
+    logic_doc_id = str(selected_doc["logicDocId"]).replace("id_", "")
+    id_procedure = selected_doc["idProcedure"]
+    proc_parts = id_procedure.split("/")
+    if len(proc_parts) < 3:
+        return None
+    jurisdiction = proc_parts[0]
+    year = proc_parts[2]
+    year = f"20{year}" if len(year) == 2 else year
+    process = id_procedure.replace("/", "_")
+    doc_lang = selected_doc.get("docLang") or language
+    blob_url = INFOCURIA_BLOB_HTML.format(
+        jurisdiction=jurisdiction,
+        year=year,
+        process=process,
+        file_name=f"{logic_doc_id}-{doc_lang}-1.html",
+    )
+    html_response = requests.get(blob_url, timeout=60)
+    html = html_response.text if html_response.status_code == 200 else ""
+
+    keywords = ";".join(_extract_labels(root_content.get("matCodeML"), language="en"))
+    directory_codes = ";".join(root_content.get("matCode", []) or [])
+    summary = ";".join(_extract_labels(root_content.get("affObjectML"), language="en"))
+    advocate = _resolve_name_by_code(
+        root_content.get("avg"),
+        root_content.get("advocateML"),
+        language="en",
+    )
+    judge = _resolve_name_by_code(
+        root_content.get("reportingJudge"),
+        root_content.get("reportingJudgeML"),
+        language="en",
+    )
+    affecting_ids = _collect_affecting_ids(root_content)
+    result_labels = ";".join(
+        _extract_labels(root_content.get("procedureResultTypeML"), language="en")
+    )
+    parties = root_content.get("parties", "")
+    citations_extra = ";".join([val for val in [parties, result_labels] if val])
+
+    return {
+        "html": html,
+        "summary": summary,
+        "keywords": keywords,
+        "directory_codes": directory_codes,
+        "eurovoc": keywords,
+        "advocate": advocate,
+        "judge": judge,
+        "affecting_ids": affecting_ids,
+        "affecting_strings": affecting_ids,
+        "citations_extra": citations_extra,
+    }
+
+
+def get_case_data_by_celex_id(celex, language="EN"):
+    try:
+        normalized = _normalize_celex(celex)
+        if normalized == "":
+            return None
+        return _get_case_data_cached(normalized, language=language.upper())
+    except Exception:
+        return None
 
 
 def is_code(word):
@@ -43,47 +299,16 @@ def response_wrapper(link, num=1):
 def get_summary_html(celex):
     """
     This method returns the html of a summary page.
-    Cellar specific, works for celex id's starting a 6 and 8.
+    Uses InfoCuria structured metadata for CJEU cases (sector 6).
     """
-    if celex == celex:  # nan check
-        if ";" in celex:
-            idss = celex.split(";")
-            for idsss in idss:
-                if "_" in idsss:
-                    celex = idsss
-        else:
-            celex = celex
-    else:
+    info = get_case_data_by_celex_id(celex, language="EN")
+    if not info:
         return "No summary available"
-    celex = celex.replace(" ", "")
-    if celex.startswith("6"):
-        if "INF" in celex:
-            link = LINK_SUMMARY_INF
-        else:
-            link = LINK_SUMMARY
-        sum_link = link.replace(CELEX_SUBSTITUTE, celex)
-        response = response_wrapper(sum_link)
-        try:
-            if response.status_code == 200:
-                if "The requested document does not exist." in response.text:
-                    return "No summary available"
-                else:
-                    return response.text
-            else:
-                return "No summary available"
-        except Exception:
-            return "No summary available"
-    elif celex.startswith("8"):
-        link = LINK_SUMJURE
-        sum_link = link.replace(CELEX_SUBSTITUTE, celex)
-        response = response_wrapper(sum_link)
-        if response.status_code == 200:
-            if "The requested document does not exist." in response.text:
-                return "No summary available"
-            else:
-                return "No summary available"
-        else:
-            return "No summary available"
+    summary = info.get("summary", "")
+    keywords = info.get("keywords", "")
+    if summary == "" and keywords == "":
+        return "No summary available"
+    return f"Keywords\n{keywords}\nSummary\n{summary}".strip()
 
 
 def get_summary_from_html(html, starting):
@@ -276,62 +501,45 @@ def get_full_text_from_html(html_text):
 
 def get_html_text_by_celex_id(id):
     """
-    This method is a wrapped for the get_html_by_celex_id
-    method imported from eurlex.
-    Sometimes thew websites do not load because of too many
-    connections at once,
-    this method waits a bit and tries again for up to 5 tries.
+    Fetches full HTML case text through InfoCuria endpoints.
     """
-    link = (
-        "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere&from=EN"
-    )
-    final = id
-    if id == id:  # nan check
-        if ";" in id:
-            ids = id.split(";")
-            for id_s in ids:
-                if "INF" not in id_s:
-                    final = id_s
-                    break
-    else:
+    info = get_case_data_by_celex_id(id, language="EN")
+    if not info:
         return "404"
-    final_link = link.replace(CELEX_SUBSTITUTE, final)
-    html = response_wrapper(final_link)
-    if "The requested document does not exist." in html.text:
-        return "404"
-    else:
-        return html.text
+    html = info.get("html", "")
+    return html if html else "404"
 
 
 def get_entire_page(celex):
     """
-    This method gets the page containing all document details for extracting
-    the subject matter and
-    the case law directory codes. Uses the celex identifier of a case.
+    Returns a synthetic details page assembled from InfoCuria metadata.
+    The text markers are kept compatible with downstream parsers.
     """
-    link = "https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX:cIdHere"
-    if celex == celex:  # nan check
-        if ";" in celex:
-            idss = celex.split(";")
-            for idsss in idss:
-                if "_" in idsss:
-                    celex = idsss
-        else:
-            celex = celex
-    else:
+    info = get_case_data_by_celex_id(celex, language="EN")
+    if not info:
         return "No data available"
-    sum_link = link.replace(CELEX_SUBSTITUTE, celex)
-    response = response_wrapper(sum_link)
-    try:
-        if response.status_code == 200:
-            if "The requested document does not exist." in response.text:
-                return "No data available"
-            else:
-                return response.text
-        else:
-            return "No data available"
-    except Exception:
-        return "No data available"
+
+    summary = info.get("summary", "")
+    keywords = info.get("keywords", "")
+    eurovoc = info.get("eurovoc", "")
+    directory_codes = info.get("directory_codes", "")
+    advocate = info.get("advocate", "")
+    judge = info.get("judge", "")
+    affecting_strings = info.get("affecting_strings", "")
+    citations_extra = info.get("citations_extra", "")
+
+    return (
+        f"Keywords:\n{keywords}\n"
+        f"Summary:\n{summary}\n"
+        f"EUROVOC\n{eurovoc}\n"
+        f"Subject matter:\n{keywords}\n"
+        f"Case law directory code:\n{directory_codes}\n"
+        f"Advocate General:{advocate}\n"
+        f"Judge-Rapporteur:{judge}\n"
+        f"Case affecting:\n{affecting_strings}\n"
+        f"Instruments cited in case law:\n{citations_extra}\n"
+        "Miscellaneous information"
+    )
 
 
 def get_subject(text):

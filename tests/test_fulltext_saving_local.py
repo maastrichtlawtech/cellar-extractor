@@ -6,6 +6,7 @@ from cellar_extractor import fulltext_saving
 
 
 def _mock_scrapers(monkeypatch):
+    monkeypatch.setattr(fulltext_saving, "get_case_data_by_celex_id", lambda _id, language="EN": None)
     monkeypatch.setattr(
         fulltext_saving,
         "get_html_text_by_celex_id",

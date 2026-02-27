@@ -3,6 +3,7 @@ import threading
 import time
 import pandas as pd
 from cellar_extractor.eurlex_scraping import (
+    get_case_data_by_celex_id,
     get_html_text_by_celex_id,
     get_full_text_from_html,
     get_summary_html,
@@ -58,6 +59,23 @@ def execute_sections_threads(
         row_index = source_indices[j]
         _id = celex.iloc[i]
         ecli = eclis.iloc[i]
+        infocuria_data = get_case_data_by_celex_id(_id, language="EN")
+        if infocuria_data:
+            html = infocuria_data.get("html", "")
+            text = get_full_text_from_html(html) if html else ""
+            full.append({"celex": str(_id), "ecli": ecli, "text": text})
+            key[row_index] = infocuria_data.get("keywords", "")
+            _sum[row_index] = infocuria_data.get("summary", "")
+            eurovocs[row_index] = infocuria_data.get("eurovoc", "")
+            case_codes[row_index] = infocuria_data.get("directory_codes", "")
+            adv_general[row_index] = infocuria_data.get("advocate", "")
+            affecting_id[row_index] = infocuria_data.get("affecting_ids", "")
+            affecting_str[row_index] = infocuria_data.get("affecting_strings", "")
+            judge_rapporteur[row_index] = infocuria_data.get("judge", "")
+            citations_extra[row_index] = infocuria_data.get("citations_extra", "")
+            progress_bar.update(1)
+            continue
+
         html = get_html_text_by_celex_id(_id)
         if html != "404":
             text = get_full_text_from_html(html)
