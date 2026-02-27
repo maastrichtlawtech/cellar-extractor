@@ -32,6 +32,7 @@ class FetchOperativePart:
             self.sparql.setQuery(
                 """
             PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
             PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
             SELECT ?operative
             WHERE {
