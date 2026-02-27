@@ -23,12 +23,12 @@ class _AlwaysFailSparql:
 def test_get_raw_cellar_metadata_stops_after_retries(monkeypatch):
     monkeypatch.setattr(cellar_queries, "SPARQLWrapper", _AlwaysFailSparql)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="Failed to query CELLAR metadata after retries"):
         cellar_queries.get_raw_cellar_metadata(["ECLI:EU:C:2025:1"])
 
 
 def test_get_citations_csv_stops_after_retries(monkeypatch):
     monkeypatch.setattr(sparql, "SPARQLWrapper", _AlwaysFailSparql)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="Failed to fetch citations CSV after retries"):
         sparql.get_citations_csv(["62000CJ0001"])

@@ -1,6 +1,16 @@
 from SPARQLWrapper import SPARQLWrapper, JSON, POST
 
 
+def _query_with_retries(sparql, retries, error_message):
+    last_error = None
+    for _ in range(retries):
+        try:
+            return sparql.queryAndConvert()
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(error_message) from last_error
+
+
 def get_all_eclis(starting_date=None, ending_date=None):
     """Gets a list of all ECLIs in CELLAR. If this needs to be picked up
     from a previous run,
@@ -54,7 +64,11 @@ def get_all_eclis(starting_date=None, ending_date=None):
 
 
 def get_raw_cellar_metadata(
-    eclis, get_labels=True, force_readable_cols=True, force_readable_vals=False
+    eclis,
+    get_labels=True,
+    force_readable_cols=True,
+    force_readable_vals=False,
+    max_retries=3,
 ):
     """Gets cellar metadata
 
@@ -106,12 +120,11 @@ def get_raw_cellar_metadata(
     sparql.setReturnFormat(JSON)
     sparql.setMethod(POST)
     sparql.setQuery(query)
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_raw_cellar_metadata(
-            eclis, get_labels, force_readable_cols, force_readable_vals
-        )
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to query CELLAR metadata after retries",
+    )
     # Create one dict for each document
     metadata = {}
     for ecli in eclis:

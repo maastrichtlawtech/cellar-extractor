@@ -2,6 +2,16 @@ from SPARQLWrapper import SPARQLWrapper, JSON, CSV, POST
 import requests
 
 
+def _query_with_retries(sparql, retries, error_message):
+    last_error = None
+    for _ in range(retries):
+        try:
+            return sparql.queryAndConvert()
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(error_message) from last_error
+
+
 def run_eurlex_webservice_query(query_input, username, password):
     target = "https://eur-lex.europa.eu/EURLexWebService?wsdl"
     query = """<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:sear="http://eur-lex.europa.eu/search">
@@ -29,7 +39,7 @@ def run_eurlex_webservice_query(query_input, username, password):
     return requests.request("POST", target, data=query, allow_redirects=True)
 
 
-def get_citations(source_celex, cites_depth=1, cited_depth=1):
+def get_citations(source_celex, cites_depth=1, cited_depth=1, max_retries=3):
     """
     Method acquired from a different law and tech project
     for getting the citations of a
@@ -72,10 +82,11 @@ def get_citations(source_celex, cites_depth=1, cited_depth=1):
         }"""
         % (source_celex, cites_depth, source_celex, cited_depth)
     )
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_citations(source_celex)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to fetch citations after retries",
+    )
     targets = set()
     for bind in ret["results"]["bindings"]:
         target = bind["name2"]["value"]
@@ -85,7 +96,7 @@ def get_citations(source_celex, cites_depth=1, cited_depth=1):
     return targets
 
 
-def get_citations_csv(celex):
+def get_citations_csv(celex, max_retries=3):
     """
     Method sending a query to the endpoint,
     which asks for cited works for each celex.
@@ -126,14 +137,15 @@ def get_citations_csv(celex):
     sparql.setReturnFormat(CSV)
     sparql.setMethod(POST)
     sparql.setQuery(query)
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_citations_csv(celex)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to fetch citations CSV after retries",
+    )
     return ret.decode("utf-8")
 
 
-def get_citing(celex, cites_depth):
+def get_citing(celex, cites_depth, max_retries=3):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     input_celex = '", "'.join(celex)
     query = """
@@ -158,14 +170,15 @@ def get_citing(celex, cites_depth):
     sparql.setReturnFormat(CSV)
     sparql.setMethod(POST)
     sparql.setQuery(query)
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_citing(celex, cites_depth)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to fetch citing cases after retries",
+    )
     return ret.decode("utf-8")
 
 
-def get_cited(celex, cited_depth):
+def get_cited(celex, cited_depth, max_retries=3):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     input_celex = '", "'.join(celex)
     query = """
@@ -190,8 +203,9 @@ def get_cited(celex, cited_depth):
     sparql.setReturnFormat(CSV)
     sparql.setMethod(POST)
     sparql.setQuery(query)
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_cited(celex, cited_depth)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to fetch cited cases after retries",
+    )
     return ret.decode("utf-8")
