@@ -9,6 +9,36 @@ class CellarSparqlQuery:
         self.sparql = SPARQLWrapper(_url)
         self.sparql.setReturnFormat(JSON)
 
+    def _query_values(self, query, variable_name="value"):
+        self.sparql.setQuery(query)
+        ret = self.sparql.queryAndConvert()
+        values = []
+        for result in ret["results"]["bindings"]:
+            value = result.get(variable_name, {}).get("value", "")
+            if value != "":
+                values.append(value)
+        return values
+
+    def _get_case_law_manifestation_values(self, number, field_name):
+        query = f"""
+            PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
+            SELECT ?value
+            WHERE {{
+                ?doc cdm:resource_legal_id_celex "{number}" .
+                {{
+                    ?doc cdm:{field_name} ?value .
+                }}
+                UNION
+                {{
+                    ?expr cdm:expression_belongs_to_work ?doc .
+                    ?man cdm:manifestation_manifests_expression ?expr .
+                    ?man cdm:{field_name} ?value .
+                }}
+            }}
+            LIMIT 100
+        """
+        return self._query_values(query, "value")
+
     def get_endorsements(self, number):
         """
         Retrieves endorsements for a given document number from a SPARQL
@@ -19,27 +49,8 @@ class CellarSparqlQuery:
             str: A string containing the endorsements text, parsed from HTML.
         """
 
-        self.sparql.setQuery(
-            f"""
-        PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?Endorsements
-        WHERE {{
-            ?doc cdm:manifestation_case-law_endorsements ?Endorsements ;
-                owl:sameAs ?w .
-            FILTER (?w = <http://publications.europa.eu/resource/celex/{number}.ENG.txt>)
-        }}
-        LIMIT 100
-        """
-        )
-
-        ret = self.sparql.queryAndConvert()
-        print(ret)
-        endorsements = ""
-        for result in ret["results"]["bindings"]:
-            endorsements += result["Endorsements"]["value"]
-
-        return BeautifulSoup(endorsements, "html.parser").text
+        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_endorsements")
+        return BeautifulSoup("".join(values), "html.parser").text
 
     def get_grounds(self, number):
         """
@@ -49,27 +60,8 @@ class CellarSparqlQuery:
         Returns:
             str: The grounds of the case-law document as plain text.
         """
-        self.sparql.setQuery(
-            f"""
-        PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?Grounds
-        WHERE {{
-            ?wc cdm:manifestation_case-law_grounds ?Grounds ;
-                owl:sameAs ?w .
-            FILTER (?w = <http://publications.europa.eu/resource/celex/{number}.ENG.txt>)
-        }}
-        LIMIT 100
-        """
-        )
-
-        ret = self.sparql.queryAndConvert()
-
-        grounds = ""
-        for result in ret["results"]["bindings"]:
-            grounds += result["Grounds"]["value"]
-
-        return BeautifulSoup(grounds, "html.parser").text
+        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_grounds")
+        return BeautifulSoup("".join(values), "html.parser").text
 
     def get_keywords(self, number):
         """
@@ -85,27 +77,8 @@ class CellarSparqlQuery:
             Exception: If there is an issue with the SPARQL query or the
             endpoint.
         """
-        self.sparql.setQuery(
-            f"""
-        PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?Keywords
-        WHERE {{
-            ?wc cdm:manifestation_case-law_keywords ?Keywords ;
-                owl:sameAs ?w .
-            FILTER (?w = <http://publications.europa.eu/resource/celex/{number}.ENG.txt>)
-        }}
-        LIMIT 100
-        """
-        )
-
-        ret = self.sparql.queryAndConvert()
-
-        keywords = ""
-        for result in ret["results"]["bindings"]:
-            keywords += result["Keywords"]["value"]
-
-        return BeautifulSoup(keywords, "html.parser").text
+        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_keywords")
+        return BeautifulSoup("".join(values), "html.parser").text
 
     def get_parties(self, number):
         """
@@ -120,26 +93,10 @@ class CellarSparqlQuery:
             case-law document, with HTML tags removed.
         """
 
-        self.sparql.setQuery(
-            f"""
-        PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?Parties
-        WHERE {{
-            ?wc cdm:manifestation_case-law_parties ?Parties ;
-                owl:sameAs ?w .
-            FILTER (?w = <http://publications.europa.eu/resource/celex/{number}.ENG.txt>)
-        }}
-        LIMIT 100
-        """
-        )
-
-        ret = self.sparql.queryAndConvert()
-        parties = ""
-        for result in ret["results"]["bindings"]:
-            parties += result["Parties"]["value"]
-
-        return BeautifulSoup(parties, "html.parser").text
+        parties = self._get_case_law_manifestation_values(number, "manifestation_case-law_parties")
+        if len(parties) == 0:
+            parties = self._get_case_law_manifestation_values(number, "case-law_national_parties")
+        return BeautifulSoup("".join(parties), "html.parser").text
 
     def get_subjects(self, number):
         """
@@ -153,27 +110,32 @@ class CellarSparqlQuery:
             str: A string containing the subjects related to the
             given CELEX number, parsed from HTML.
         """
-        self.sparql.setQuery(
-            f"""
-        PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?Subjects
-        WHERE {{
-            ?wc cdm:manifestation_case-law_subject ?Subjects ;
-                owl:sameAs ?w .
-            FILTER (?w = <http://publications.europa.eu/resource/celex/{number}.ENG.txt>)
-        }}
-        LIMIT 100
-        """
-        )
+        subjects = self._get_case_law_manifestation_values(number, "manifestation_case-law_subject")
+        if len(subjects) == 0:
+            self.sparql.setQuery(
+                f"""
+                PREFIX cdm: <http://publications.europa.eu/ontology/cdm#>
+                PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+                SELECT ?Subjects
+                WHERE {{
+                    ?doc cdm:resource_legal_id_celex "{number}" .
+                    ?doc cdm:resource_legal_is_about_subject-matter ?subject .
+                    OPTIONAL {{
+                        ?subject skos:prefLabel ?Subjects .
+                        FILTER(lang(?Subjects) = "en")
+                    }}
+                }}
+                LIMIT 100
+                """
+            )
+            ret = self.sparql.queryAndConvert()
+            subjects = [
+                result.get("Subjects", {}).get("value", "")
+                for result in ret["results"]["bindings"]
+                if result.get("Subjects", {}).get("value", "") != ""
+            ]
 
-        ret = self.sparql.queryAndConvert()
-
-        subjects = ""
-        for result in ret["results"]["bindings"]:
-            subjects += result["Subjects"]["value"]
-
-        return BeautifulSoup(subjects, "html.parser").text
+        return BeautifulSoup("".join(subjects), "html.parser").text
 
     def get_citations(self, source_celex, cites_depth=1, cited_depth=1):
         """

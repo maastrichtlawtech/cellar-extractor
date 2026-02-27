@@ -2,7 +2,7 @@
 
 A Python library for extracting CELLAR case law data from EUR-Lex.
 
-This library contains functions to get CELLAR case law data from the EUR-Lex SPARQL endpoint and scrape additional information from EUR-Lex websites.
+This library contains functions to get CELLAR case law data from the EUR-Lex SPARQL endpoint and enrich additional information from InfoCuria and CELLAR item endpoints.
 
 ## Version
 
@@ -35,10 +35,12 @@ Python 3.9+
 1. ``get_cellar``  
     Gets all the ECLI data from the eurlex sparql endpoint and saves them in the CSV or JSON format, in-memory or as a saved file.
 2. ``get_cellar_extra``  
-    Gets all the ECLI data from the eurlex sparql endpoint, and on top of that scrapes the eurlex websites to acquire 
-    the full text, keywords, case law directory code and eurovoc identifiers. If the user does have an eurlex account with access to the eurlex webservices, he can also 
+    Gets all the ECLI data from the eurlex sparql endpoint, and enriches metadata/fulltext using sector-aware sources:
+    sector ``6`` (CJEU) via InfoCuria APIs and sector ``8`` (national case law) via CELLAR RDF + item endpoints.
+    If the user does have an eurlex account with access to the eurlex webservices, he can also 
     pass his webservices login credentials to the method, in order to extract data about works citing work and works 
-    being cited by work. The full text is returned as a JSON file, rest of data as a CSV.  Can be in-memory or as saved files.
+    being cited by work. The full text is returned as a JSON file, rest of data as a CSV. Can be in-memory or as saved files.
+    The enriched CSV now includes provenance columns (``fulltext_source``, ``summary_source``) and ``missing_reasons``.
 3. ``get_nodes_and_edges_lists``  
     Gets 2 list objects, one for the nodes and edges of the citations within the passed dataframe.
     Allows the creation of a network graph of the citations. Can only be returned in-memory.
@@ -162,6 +164,11 @@ output=instance.to_csv() # for csv
 output=instance.to_txt() # for txt
 output=instance.to_json() # for json
 ```
+
+## Integration Test Flags
+
+- ``RUN_INFOCURIA_INTEGRATION=1``: run live sector-6 InfoCuria integration tests.
+- ``RUN_SECTOR8_INTEGRATION=1``: run live sector-8 CELLAR integration tests.
 
 ## License
 [![License: Apache 2.0](https://img.shields.io/github/license/maastrichtlawtech/extraction_libraries)](https://opensource.org/licenses/Apache-2.0)

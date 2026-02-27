@@ -17,7 +17,7 @@ def test_get_grounds_strips_html_tags():
     payload = {
         "results": {
             "bindings": [
-                {"Grounds": {"value": "<p>Alpha</p><p>Beta</p>"}},
+                {"value": {"value": "<p>Alpha</p><p>Beta</p>"}},
             ]
         }
     }
@@ -55,3 +55,15 @@ def test_get_citations_deduplicates_targets():
     result = query.get_citations("62000CJ0003")
 
     assert set(result) == {"62000CJ0001", "62000CJ0002"}
+
+
+def test_get_grounds_query_no_longer_relies_on_eng_manifestation_uri():
+    payload = {"results": {"bindings": []}}
+    query = CellarSparqlQuery()
+    fake = _FakeSparql(payload)
+    query.sparql = fake
+
+    query.get_grounds("82010AT0127(51)")
+
+    assert "resource/celex/82010AT0127(51).ENG.txt" not in fake.query
+    assert 'cdm:resource_legal_id_celex "82010AT0127(51)"' in fake.query
