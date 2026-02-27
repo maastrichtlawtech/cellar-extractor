@@ -1,197 +1,155 @@
-import random
-from cellar_extractor import *
+import json
+from pathlib import Path
+
+import pandas as pd
+
+from cellar_extractor import cellar
 
 
-def cellar_csv_n():
-    get_cellar(save_file="n", file_format="csv", sd="2022-01-01",
-               max_ecli=100)
+def _base_metadata(ecli, celex):
+    return {
+        ecli: {
+            "ECLI": [ecli],
+            "CELEX IDENTIFIER": [celex],
+            "DATE OF DOCUMENT": ["2025-01-01"],
+            "TYPE OF LEGAL RESOURCE": ["CJ"],
+            "SECTOR IDENTIFIER": ["6"],
+        }
+    }
 
 
-def cellar_csv_y():
-    get_cellar(save_file="y", file_format="csv", sd="2022-01-01",
-               max_ecli=100)
+def test_get_cellar_csv_in_memory(monkeypatch):
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1", "E2"])
+    monkeypatch.setattr(
+        cellar,
+        "get_raw_cellar_metadata",
+        lambda eclis: {
+            **_base_metadata("E1", "62025CJ0001"),
+            **_base_metadata("E2", "62025CJ0002"),
+        },
+    )
+
+    df = cellar.get_cellar(
+        ed="2025-01-02T00:00:00",
+        save_file="n",
+        max_ecli=10,
+        sd="2025-01-01",
+        file_format="csv",
+    )
+
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == 2
+    assert set(df["ECLI"].tolist()) == {"E1", "E2"}
 
 
-def cellar_json_n():
-    get_cellar(save_file="n", file_format="json", sd="2022-01-01",
-               max_ecli=100)
+def test_get_cellar_json_in_memory(monkeypatch):
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(
+        cellar,
+        "get_raw_cellar_metadata",
+        lambda eclis: _base_metadata("E1", "62025CJ0001"),
+    )
+
+    output = cellar.get_cellar(
+        ed="2025-01-02T00:00:00",
+        save_file="n",
+        max_ecli=10,
+        sd="2025-01-01",
+        file_format="json",
+    )
+
+    assert isinstance(output, dict)
+    assert output["E1"]["CELEX IDENTIFIER"] == ["62025CJ0001"]
 
 
-def cellar_json_y():
-    get_cellar(save_file="y", file_format="json", sd="2022-01-01",
-               max_ecli=100)
+def test_get_cellar_json_save_file(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(
+        cellar,
+        "get_raw_cellar_metadata",
+        lambda eclis: _base_metadata("E1", "62025CJ0001"),
+    )
+
+    cellar.get_cellar(
+        ed="2025-01-02T00:00:00",
+        save_file="y",
+        max_ecli=10,
+        sd="2025-01-01",
+        file_format="json",
+    )
+
+    target = Path("data/cellar_2025-01-01_2025-01-02T00_00_00.json")
+    assert target.exists()
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert "E1" in written
 
 
-def cellar_extra_y():
-    get_cellar_extra(save_file="y", max_ecli=10, sd="2022-01-01", threads=10)
+def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
+    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
+    called = {}
+
+    def _fake_extra(data, threads, username, password):
+        called["threads"] = threads
+        called["username"] = username
+        called["password"] = password
+        return data.copy(), [{"celex": "62025CJ0001", "ecli": "E1", "text": "x"}]
+
+    monkeypatch.setattr(cellar, "extra_cellar", _fake_extra)
+
+    data, fulltext = cellar.get_cellar_extra(
+        ed="2025-01-02T00:00:00",
+        save_file="n",
+        max_ecli=10,
+        sd="2025-01-01",
+        threads=4,
+        username="user",
+        password="pass",
+    )
+
+    assert len(data) == 1
+    assert len(fulltext) == 1
+    assert called == {"threads": 4, "username": "user", "password": "pass"}
 
 
-def cellar_extra_n():
-    get_cellar_extra(save_file="n", max_ecli=10, sd="2022-01-01", threads=10)
+def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
+    called = {}
+
+    def _fake_extra(data, filepath, threads, username, password):
+        called["filepath"] = filepath
+        called["threads"] = threads
+        called["username"] = username
+        called["password"] = password
+
+    monkeypatch.setattr(cellar, "extra_cellar", _fake_extra)
+
+    cellar.get_cellar_extra(
+        ed="2025-01-02T00:00:00",
+        save_file="y",
+        max_ecli=10,
+        sd="2025-01-01",
+        threads=3,
+    )
+
+    assert Path("data").exists()
+    assert called["filepath"].endswith("data/cellar_extra_2025-01-01_2025-01-02T00_00_00.csv")
+    assert called["threads"] == 3
 
 
-def test_cellar_extra_y():
-    try:
-        cellar_extra_y()
-        assert True
-    except Exception:
-        assert False, "Saving extra cellar failed"
+def test_filter_subject_matter_case_insensitive():
+    df = pd.DataFrame(
+        {
+            "LEGAL RESOURCE IS ABOUT SUBJECT MATTER": [
+                "Competition law",
+                "Tax law",
+                "",
+            ]
+        }
+    )
 
-
-def test_cellar_extra_n():
-    try:
-        cellar_extra_n()
-        assert True
-    except Exception:
-        assert False, "Downloading extra cellar failed"
-
-
-def test_cellar_csv_y():
-    try:
-        cellar_csv_y()
-        assert True
-    except Exception:
-        assert False, "Saving cellar as csv failed."
-
-
-def test_cellar_csv_n():
-    try:
-        cellar_csv_n()
-        assert True
-    except Exception:
-        assert False, "Downloading cellar as csv failed."
-
-
-def test_cellar_json_y():
-    try:
-        cellar_csv_y()
-        assert True
-    except Exception:
-        assert False, "Saving cellar as json failed."
-
-
-def test_cellar_json_n():
-    try:
-        cellar_csv_y()
-        assert True
-    except Exception:
-        assert False, "Downloading cellar as json failed."
-
-
-def operative_part_csv(celex):
-    csv_store = Writing(celex)
-    try:
-        csv_store.to_csv()
-        assert True
-    except Exception:
-        assert False, "Downloading and storing as csv failed\
-              for operative part"
-
-
-def operative_part_json(celex):
-    json_store = Writing(celex)
-    try:
-        json_store.to_json()
-        assert True
-    except Exception:
-        assert False, "Downloading and storing as json failed\
-            for operative part"
-
-
-def operative_part_txt(celex):
-    txt_store = Writing(celex)
-    try:
-        txt_store.to_txt()
-        assert True
-    except Exception:
-        assert False, "Downloading and storing as txt failed\
-            for operative part"
-
-
-def for_operative_part(celex):
-    try:
-        test_output = FetchOperativePart(celex)
-        test_output()
-        assert True
-    except Exception:
-        assert False, "Cannot extract for celex"
-
-
-def test_operative_part_txt():
-    celex_store = [
-        "61983CJ0207",
-        "61988CJ0360",
-        "62005CJ0168",
-        "62008CJ0484",
-        "62010CJ0014",
-        "62005CJ0343",
-        "62000CJ0154",
-    ]
-    celex: str
-    choice = random.randint(0, len(celex_store) - 1)
-    celex = celex_store[choice]
-    try:
-        operative_part_txt(celex)
-        assert True
-    except Exception:
-        assert False, "Cannot extract operative text"
-
-
-def test_operative_part_json():
-    celex_store = [
-        "61983CJ0207",
-        "61988CJ0360",
-        "62005CJ0168",
-        "62008CJ0484",
-        "62010CJ0014",
-        "62005CJ0343",
-        "62000CJ0154",
-    ]
-    celex: str
-    choice = random.randint(0, len(celex_store) - 1)
-    celex = celex_store[choice]
-    try:
-        operative_part_json(celex)
-        assert True
-    except Exception:
-        assert False, "Cannot extract operative text"
-
-
-def test_operative_part_csv():
-    celex_store = [
-        "61983CJ0207",
-        "61988CJ0360",
-        "62005CJ0168",
-        "62008CJ0484",
-        "62010CJ0014",
-        "62005CJ0343",
-        "62000CJ0154",
-    ]
-    celex: str
-    choice = random.randint(0, len(celex_store) - 1)
-    celex = celex_store[choice]
-    try:
-        operative_part_csv(celex)
-        assert True
-    except Exception:
-        assert False, "Cannot extract operative text"
-
-
-def test_for_operative_part():
-    celex_store = [
-        "61983CJ0207",
-        "61988CJ0360",
-        "62005CJ0168",
-        "62008CJ0484",
-        "62010CJ0014",
-        "62005CJ0343",
-        "62000CJ0154",
-    ]
-    celex: str
-    choice = random.randint(0, len(celex_store) - 1)
-    celex = celex_store[choice]
-    try:
-        for_operative_part(celex)
-        assert True
-    except Exception:
-        assert False, "Cannot extract operative part"
+    filtered = cellar.filter_subject_matter(df=df, phrase="competition")
+    assert len(filtered) == 1
