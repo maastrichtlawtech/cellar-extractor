@@ -34,6 +34,9 @@ def execute_sections_threads(
     list_affecting_id,
     list_affecting_str,
     list_citations_extra,
+    list_fulltext_source,
+    list_summary_source,
+    list_missing_reasons,
     progress_bar,
 ):
     """
@@ -54,6 +57,9 @@ def execute_sections_threads(
     affecting_id = pd.Series([], dtype="string")
     affecting_str = pd.Series([], dtype="string")
     citations_extra = pd.Series([], dtype="string")
+    fulltext_source = pd.Series([], dtype="string")
+    summary_source = pd.Series([], dtype="string")
+    missing_reasons = pd.Series([], dtype="string")
     for i in range(len(celex)):
         j = start + i
         row_index = source_indices[j]
@@ -61,11 +67,45 @@ def execute_sections_threads(
         ecli = eclis.iloc[i]
         infocuria_data = get_case_data_by_celex_id(_id, language="EN")
         if infocuria_data:
-            html = infocuria_data.get("html", "")
-            text = get_full_text_from_html(html) if html else ""
-            full.append({"celex": str(_id), "ecli": ecli, "text": text})
-            key[row_index] = infocuria_data.get("keywords", "")
-            _sum[row_index] = infocuria_data.get("summary", "")
+            text = infocuria_data.get("text", "")
+            if text == "":
+                html = infocuria_data.get("html", "")
+                text = get_full_text_from_html(html) if html else ""
+            summary_value = infocuria_data.get("summary", "")
+            keyword_value = infocuria_data.get("keywords", "")
+            text_source_value = infocuria_data.get("text_source", "")
+            summary_source_value = infocuria_data.get("summary_source", "")
+            if text_source_value == "" and text != "":
+                text_source_value = "EXTRACTOR_FALLBACK_TEXT"
+            if summary_source_value == "" and summary_value != "":
+                summary_source_value = "EXTRACTOR_FALLBACK_SUMMARY"
+
+            reasons = [
+                reason
+                for reason in str(infocuria_data.get("missing_reasons", "")).split(";")
+                if reason != ""
+            ]
+            if text == "" and "FULLTEXT_UNAVAILABLE_UPSTREAM" not in reasons:
+                reasons.append("FULLTEXT_UNAVAILABLE_UPSTREAM")
+            if summary_value == "" and "SUMMARY_UNAVAILABLE_UPSTREAM" not in reasons:
+                reasons.append("SUMMARY_UNAVAILABLE_UPSTREAM")
+            if text == "" and summary_value == "" and "UNAVAILABLE_UPSTREAM" not in reasons:
+                reasons.append("UNAVAILABLE_UPSTREAM")
+            reasons_value = ";".join(dict.fromkeys(reasons))
+
+            full.append(
+                {
+                    "celex": str(_id),
+                    "ecli": ecli,
+                    "text": text,
+                    "text_source": text_source_value,
+                    "text_language": infocuria_data.get("text_language", ""),
+                    "text_format": infocuria_data.get("text_format", ""),
+                    "missing_reasons": reasons_value,
+                }
+            )
+            key[row_index] = keyword_value
+            _sum[row_index] = summary_value
             eurovocs[row_index] = infocuria_data.get("eurovoc", "")
             case_codes[row_index] = infocuria_data.get("directory_codes", "")
             adv_general[row_index] = infocuria_data.get("advocate", "")
@@ -73,26 +113,28 @@ def execute_sections_threads(
             affecting_str[row_index] = infocuria_data.get("affecting_strings", "")
             judge_rapporteur[row_index] = infocuria_data.get("judge", "")
             citations_extra[row_index] = infocuria_data.get("citations_extra", "")
+            fulltext_source[row_index] = text_source_value
+            summary_source[row_index] = summary_source_value
+            missing_reasons[row_index] = reasons_value
             progress_bar.update(1)
             continue
 
         html = get_html_text_by_celex_id(_id)
+        text = ""
         if html != "404":
             text = get_full_text_from_html(html)
-            json_text = {"celex": str(_id), "ecli": ecli, "text": text}
-            full.append(json_text)
-        else:
-            json_text = {"celex": str(_id), "ecli": ecli, "text": ""}
-            full.append(json_text)
+        summary_source_value = ""
         summary = get_summary_html(_id)
         if summary != "No summary available":
             text = get_keywords_from_html(summary, _id[0])
             text2 = get_summary_from_html(summary, _id[0])
             key[row_index] = text
             _sum[row_index] = text2
+            summary_source_value = "LEGACY_EURLEX_SUMMARY_HTML"
         else:
             key[row_index] = ""
             _sum[row_index] = ""
+            text2 = ""
         entire_page = get_entire_page(_id)
         text = get_full_text_from_html(entire_page)
         if entire_page != "No data available":
@@ -118,6 +160,28 @@ def execute_sections_threads(
         affecting_str[row_index] = strings_affecting
         judge_rapporteur[row_index] = judge
         citations_extra[row_index] = citation_extra
+        fulltext_source_value = "LEGACY_EURLEX_HTML" if html != "404" else ""
+        reason_values = []
+        if html == "404":
+            reason_values.append("FULLTEXT_UNAVAILABLE_UPSTREAM")
+        if text2 == "":
+            reason_values.append("SUMMARY_UNAVAILABLE_UPSTREAM")
+        if html == "404" and text2 == "":
+            reason_values.append("UNAVAILABLE_UPSTREAM")
+        reasons_value = ";".join(reason_values)
+        fulltext_source[row_index] = fulltext_source_value
+        summary_source[row_index] = summary_source_value
+        missing_reasons[row_index] = reasons_value
+        json_text = {
+            "celex": str(_id),
+            "ecli": ecli,
+            "text": "" if html == "404" else get_full_text_from_html(html),
+            "text_source": fulltext_source_value,
+            "text_language": "EN" if html != "404" else "",
+            "text_format": "html" if html != "404" else "",
+            "missing_reasons": reasons_value,
+        }
+        full.append(json_text)
         progress_bar.update(1)
 
     list_sum.append(_sum)
@@ -130,6 +194,9 @@ def execute_sections_threads(
     list_affecting_id.append(affecting_id)
     list_affecting_str.append(affecting_str)
     list_citations_extra.append(citations_extra)
+    list_fulltext_source.append(fulltext_source)
+    list_summary_source.append(summary_source)
+    list_missing_reasons.append(missing_reasons)
 
 
 def add_sections(data, threads, json_filepath=None):
@@ -178,6 +245,9 @@ def add_sections(data, threads, json_filepath=None):
     list_affecting_id = []
     list_affecting_str = []
     list_citations_extra = []
+    list_fulltext_source = []
+    list_summary_source = []
+    list_missing_reasons = []
     for i in range(0, length, at_once_threads):
         curr_celex = celex[i : (i + at_once_threads)]
         curr_ecli = eclis[i : (i + at_once_threads)]
@@ -198,6 +268,9 @@ def add_sections(data, threads, json_filepath=None):
                 list_affecting_id,
                 list_affecting_str,
                 list_citations_extra,
+                list_fulltext_source,
+                list_summary_source,
+                list_missing_reasons,
                 _bar,
             ),
         )
@@ -215,6 +288,9 @@ def add_sections(data, threads, json_filepath=None):
     add_column_frow_list(data, "affecting_ids", list_affecting_id)
     add_column_frow_list(data, "affecting_strings", list_affecting_str)
     add_column_frow_list(data, "citations_extra_info", list_citations_extra)
+    add_column_frow_list(data, "fulltext_source", list_fulltext_source)
+    add_column_frow_list(data, "summary_source", list_summary_source)
+    add_column_frow_list(data, "missing_reasons", list_missing_reasons)
     json_file = []
     for _item in list_full:
         if len(_item) > 0:
