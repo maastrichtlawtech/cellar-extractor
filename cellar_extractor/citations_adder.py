@@ -184,10 +184,9 @@ def allowed_id(id):
     as it will also include treaties and other documents,
     which are not being extracted by the cellar extractor.
     """
-    if id != "":
-        return id[0] == 8 or id[0] == 6
-    else:
+    if id == "":
         return False
+    return id[0] in {"6", "8"}
 
 
 def reverse_citing_dict(citing):
@@ -313,9 +312,11 @@ def add_citations_separate(data, threads):
     cited_df = pd.Series([], dtype="string")
     for cel in celexes:
         index = data[data["CELEX IDENTIFIER"] == cel].index.values
+        if len(index) == 0:
+            continue
 
-        cited_data = cited[cited["celex"] == celex].loc[:, "citedD"]
-        citing_data = citing[citing["celex"] == celex].loc[:, "citedD"]
+        cited_data = cited[cited["celex"] == cel].loc[:, "citedD"]
+        citing_data = citing[citing["celex"] == cel].loc[:, "citedD"]
 
         string_cited = ";".join(cited_data)
         string_citing = ";".join(citing_data)
