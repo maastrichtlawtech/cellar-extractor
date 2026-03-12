@@ -3,7 +3,41 @@
 [![CI](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml/badge.svg)](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml)
 ![Coverage](https://img.shields.io/badge/coverage-50%25-yellow)
 
-`cellar-extractor` is a Python library for building enriched EUR-Lex / CELLAR case-law datasets.
+A Python library for extracting CELLAR case law data from EUR-Lex.
+
+This library contains functions to get CELLAR case law data from the EUR-Lex SPARQL endpoint and enrich additional information from InfoCuria and CELLAR item sources.
+
+## Version
+
+Python `3.9+`
+
+## Tests
+
+- CI: the badge above tracks the default supported test workflow
+- Coverage: the badge above tracks the default local test suite coverage snapshot
+
+## Contributors
+
+<table>
+   <tr>
+      <td align="center"><a href="https://github.com/pranavnbapat"><img src="https://avatars.githubusercontent.com/u/7271334?v=4" width="100;" alt="pranavnbapat"/><br /><sub><b>Pranav Bapat</b></sub></a></td>
+      <td align="center"><a href="https://github.com/Cloud956"><img src="https://avatars.githubusercontent.com/u/24865274?v=4" width="100;" alt="Cloud956"/><br /><sub><b>Piotr Lewandowski</b></sub></a></td>
+      <td align="center"><a href="https://github.com/shashankmc"><img src="https://avatars.githubusercontent.com/u/3445114?v=4" width="100;" alt="shashankmc"/><br /><sub><b>shashankmc</b></sub></a></td>
+      <td align="center"><a href="https://github.com/gijsvd"><img src="https://avatars.githubusercontent.com/u/31765316?v=4" width="100;" alt="gijsvd"/><br /><sub><b>gijsvd</b></sub></a></td>
+      <td align="center"><a href="https://github.com/venvis"><img src="https://avatars.githubusercontent.com/venvis" width="100;" alt="venvis"/><br /><sub><b>venvis</b></sub></a></td>
+      <td align="center"><a href="https://github.com/davidwickerhf"><img src="https://avatars.githubusercontent.com/davidwickerhf" width="100;" alt="davidwickerhf"/><br /><sub><b>davidwickerhf</b></sub></a></td>
+   </tr>
+</table>
+
+## How to install?
+
+```bash
+pip install cellar-extractor
+```
+
+## What The Project Does
+
+`cellar-extractor` builds enriched EUR-Lex / CELLAR case-law datasets.
 
 It starts from CELLAR metadata and then enriches:
 
@@ -17,16 +51,6 @@ The extractor is currently centered on:
 
 - **sector 6** case law: CJEU-style material via InfoCuria
 - **sector 8** case law: mixed / national-case-law material via CELLAR RDF + item downloads
-
-## Installation
-
-```bash
-pip install cellar-extractor
-```
-
-Python `>= 3.9`.
-
-## What The Project Does
 
 The main workflow has two stages.
 
