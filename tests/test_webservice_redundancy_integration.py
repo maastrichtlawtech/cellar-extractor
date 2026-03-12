@@ -12,6 +12,11 @@ from cellar_extractor.citations_adder import (
 from cellar_extractor.eurlex_scraping import extract_dictionary_from_webservice_query
 from cellar_extractor.sparql import run_eurlex_webservice_query
 
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_WEBSERVICE_INTEGRATION") != "1",
+    reason="Set RUN_WEBSERVICE_INTEGRATION=1 to run legacy EUR-Lex webservice tests.",
+)
+
 
 def _read_env_file():
     project_root = Path(__file__).resolve().parents[1]

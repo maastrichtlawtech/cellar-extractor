@@ -1,5 +1,8 @@
 # Cellar Extractor
 
+[![CI](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml/badge.svg)](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml)
+![Coverage](https://img.shields.io/badge/coverage-50%25-yellow)
+
 `cellar-extractor` is a Python library for building enriched EUR-Lex / CELLAR case-law datasets.
 
 It starts from CELLAR metadata and then enriches:
@@ -305,7 +308,7 @@ RUN_CITATION_INTEGRATION=1 pytest -q tests/test_citation_graph_integration.py
 Only needed if you want to re-check SOAP redundancy:
 
 ```bash
-pytest -q tests/test_webservice_credentials_integration.py tests/test_webservice_redundancy_integration.py
+RUN_WEBSERVICE_INTEGRATION=1 pytest -q tests/test_webservice_credentials_integration.py tests/test_webservice_redundancy_integration.py
 ```
 
 If used, credentials are read from `.env`:
