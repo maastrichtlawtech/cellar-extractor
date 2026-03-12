@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 import logging
+import warnings
 from io import StringIO
 from os.path import dirname, abspath
 import pandas as pd
@@ -15,6 +16,34 @@ from cellar_extractor.eurlex_scraping import extract_dictionary_from_webservice_
 from tqdm import tqdm
 
 sys.path.append(dirname(dirname(dirname(dirname(abspath(__file__))))))
+
+
+def _deduplicate_preserving_order(values):
+    ordered = []
+    seen = set()
+    for value in values:
+        item = str(value).strip()
+        if item == "" or item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ";".join(ordered)
+
+
+def _replace_or_insert_column(df, column_title, column):
+    if column_title in df.columns:
+        df.drop(columns=[column_title], inplace=True)
+    df.insert(1, column_title, column)
+
+
+def _group_relations(frame):
+    if frame.empty:
+        return {}
+
+    grouped = {}
+    for celex, values in frame.groupby("celex", sort=False)["citedD"]:
+        grouped[celex] = _deduplicate_preserving_order(values.tolist())
+    return grouped
 
 
 def execute_citations(csv_list, citations):
@@ -69,7 +98,8 @@ def add_citations(data, threads):
         cited = df[df["celex"] == celex].loc[:, "citedD"]
         string = ";".join(cited)
         citations[index[0]] = string
-    data.pop(name)
+    if name in data.columns:
+        data.pop(name)
     citations.sort_index(inplace=True)
     data.insert(1, name, citations)
 
@@ -212,11 +242,14 @@ def add_dictionary_to_df(df, dictionary, column_title):
     column = pd.Series([], dtype="string")
     celex = df.loc[:, "CELEX IDENTIFIER"]
     for k in dictionary:
-        if celex.str.contains(k).any():
-            index = df.index[df["CELEX IDENTIFIER"].str.contains(k, na=False)].tolist()
+        matches = celex.fillna("").apply(
+            lambda value: k in [part.strip() for part in str(value).split(";")]
+        )
+        if matches.any():
+            index = df.index[matches].tolist()
             column[index[0]] = dictionary.get(k)
     column.sort_index(inplace=True)
-    df.insert(1, column_title, column)
+    _replace_or_insert_column(df, column_title, column)
 
 
 def add_citations_separate_webservice(data, username, password):
@@ -225,6 +258,13 @@ def add_citations_separate_webservice(data, username, password):
     Old column -> links to cited works
     New columns -> celex identifiers of cited works and works citing current work
     """
+    warnings.warn(
+        "add_citations_separate_webservice is deprecated. "
+        "Use add_citations_separate instead; SPARQL now provides the authoritative "
+        "citation graph used by the extractor.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     celex = data.loc[:, "CELEX IDENTIFIER"]
     query = " SELECT CI, DN WHERE DN = 62019CJ0668"
     response = run_eurlex_webservice_query(query, username, password)
@@ -282,6 +322,12 @@ def add_citations_separate(data, threads):
 
     celex = data.loc[:, "CELEX IDENTIFIER"]
     length = celex.size
+    if length == 0:
+        _replace_or_insert_column(data, "citing", pd.Series([], dtype="string"))
+        _replace_or_insert_column(data, "cited_by", pd.Series([], dtype="string"))
+        return
+
+    threads = max(1, threads)
     if length > 100:  # to avoid getting problems with small files
         at_once_threads = int(length / threads)
     else:
@@ -306,29 +352,20 @@ def add_citations_separate(data, threads):
     cited = pd.concat(map(pd.read_csv, cited_csv), ignore_index=True)
     citing = pd.concat(map(pd.read_csv, citing_csv), ignore_index=True)
 
-    celexes = pd.unique(cited.loc[:, "celex"])
+    cited_map = _group_relations(cited)
+    citing_map = _group_relations(citing)
 
     citing_df = pd.Series([], dtype="string")
     cited_df = pd.Series([], dtype="string")
-    for cel in celexes:
-        index = data[data["CELEX IDENTIFIER"] == cel].index.values
-        if len(index) == 0:
-            continue
-
-        cited_data = cited[cited["celex"] == cel].loc[:, "citedD"]
-        citing_data = citing[citing["celex"] == cel].loc[:, "citedD"]
-
-        string_cited = ";".join(cited_data)
-        string_citing = ";".join(citing_data)
-
-        citing_df[index[0]] = string_citing
-        cited_df[index[0]] = string_cited
+    for index, cel in data.loc[:, "CELEX IDENTIFIER"].items():
+        cited_df[index] = cited_map.get(cel, "")
+        citing_df[index] = citing_map.get(cel, "")
 
     citing_df.sort_index(inplace=True)
     cited_df.sort_index(inplace=True)
 
-    data.insert(1, "citing", citing_df)
-    data.insert(1, "cited_by", cited_df)
+    _replace_or_insert_column(data, "citing", citing_df)
+    _replace_or_insert_column(data, "cited_by", cited_df)
 
 
 if __name__ == "__main__":

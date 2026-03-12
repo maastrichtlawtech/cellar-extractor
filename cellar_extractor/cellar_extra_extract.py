@@ -1,6 +1,8 @@
+import logging
+
 from cellar_extractor.json_to_csv import read_csv
 from cellar_extractor.fulltext_saving import add_sections
-from cellar_extractor.citations_adder import add_citations_separate_webservice
+from cellar_extractor.citations_adder import add_citations_separate
 
 
 def extra_cellar(data=None, filepath=None, threads=10, username="", password=""):
@@ -14,10 +16,10 @@ def extra_cellar(data=None, filepath=None, threads=10, username="", password="")
         If provided, the data will be read from this file.
         threads (int, optional): The number of threads to use for parallel
         processing. Default is 10.
-        username (str, optional): The username for accessing a separate
-        webservice. Default is an empty string.
-        password (str, optional): The password for accessing a separate
-        webservice. Default is an empty string.
+        username (str, optional): Deprecated and ignored. Kept for backward
+        compatibility with older callers.
+        password (str, optional): Deprecated and ignored. Kept for backward
+        compatibility with older callers.
 
     Returns:
         tuple: A tuple containing the modified dataset and a JSON object.
@@ -25,8 +27,8 @@ def extra_cellar(data=None, filepath=None, threads=10, username="", password="")
     If `data` is not provided, the dataset will be read from the specified
     `filepath`.
 
-    If `username` and `password` are provided, the function will add
-    citations using a separate webservice.
+    Citation enrichment now always uses the public SPARQL endpoint. EUR-Lex
+    webservice credentials are no longer required for extractor completeness.
 
     The function will add sections to the dataset using the specified
     number of `threads`. If `filepath` is provided,
@@ -35,13 +37,16 @@ def extra_cellar(data=None, filepath=None, threads=10, username="", password="")
     """
     if data is None:
         data = read_csv(filepath)
+    if username != "" or password != "":
+        logging.info(
+            "EUR-Lex webservice credentials were provided but are ignored. "
+            "Citation enrichment now uses the SPARQL path only."
+        )
+
+    add_citations_separate(data, threads)
     if filepath:
-        if username != "" and password != "":
-            add_citations_separate_webservice(data, username, password)
         add_sections(data, threads, filepath.replace(".csv", "_fulltext.json"))
         data.to_csv(filepath, index=False)
     else:
-        if username != "" and password != "":
-            add_citations_separate_webservice(data, username, password)
         json = add_sections(data, threads)
         return data, json

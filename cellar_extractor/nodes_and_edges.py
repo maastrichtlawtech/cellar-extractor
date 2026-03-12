@@ -1,3 +1,9 @@
+def _normalize_relation_values(value):
+    if value != value or value == "":
+        return []
+    return [part.strip() for part in str(value).split(";") if part.strip()]
+
+
 def extract_containing_subject_matter(df, phrase):
     returner = df[
         df["LEGAL RESOURCE IS ABOUT SUBJECT MATTER"].str.contains(phrase, na=False)
@@ -16,23 +22,19 @@ def get_edges_list(df, only_local):
     keys = extraction["CELEX IDENTIFIER"].tolist()
     vals = extraction["citing"].tolist()
     nodes = set()
-    edges = list()
-    for i in enumerate(keys):
-        k = keys[i]
-        val = vals[i]
-        if val != val:
-            continue
+    edges = []
+    local_keys = set(str(key) for key in keys)
+    for k, val in zip(keys, vals):
         nodes.add(str(k))
-        val_unpacked = val.split(";")
-        for val in val_unpacked:
-            if only_local and val not in keys:
+        for target in _normalize_relation_values(val):
+            if only_local and target not in local_keys:
                 continue
-            nodes.add(str(val))
-            edges.append(str(k) + "," + str(val))
+            nodes.add(target)
+            edge = str(k) + "," + target
+            if edge not in edges:
+                edges.append(edge)
 
-    nodes = list(nodes)
-
-    return edges, list(nodes)
+    return edges, sorted(nodes)
 
 
 def get_nodes_and_edges(df, only_local):

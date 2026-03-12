@@ -1,10 +1,9 @@
 import os
 from pathlib import Path
 
-import pandas as pd
 import pytest
+import xmltodict
 
-from cellar_extractor.citations_adder import add_citations_separate_webservice
 from cellar_extractor.sparql import run_eurlex_webservice_query
 
 
@@ -29,6 +28,22 @@ def _read_env_file():
 
 def _get_credential(name, env_values):
     return os.getenv(name) or env_values.get(name, "")
+
+
+def _fault_excerpt(response, limit=240):
+    text = str(response.text).replace("\n", " ").strip()
+    return text[:limit]
+
+
+def _fault_reason(response):
+    try:
+        read = xmltodict.parse(response.text)
+        fault = read["env:Envelope"]["env:Body"]["env:Fault"]
+        code = fault["Code"]["Subcode"]["Value"]
+        reason = fault["Reason"]["Text"]["#text"]
+        return f"{code}: {reason}"
+    except Exception:
+        return _fault_excerpt(response)
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +72,8 @@ def webservice_ready(webservice_credentials):
     if response.status_code == 500:
         pytest.fail(
             "EUR-Lex webservice returned 500 without the call-limit marker. "
-            "Credentials are likely invalid for webservice access."
+            "Credentials are likely invalid for webservice access. "
+            f"SOAP fault: {_fault_reason(response)}"
         )
 
     return username, password
@@ -72,11 +88,18 @@ def test_webservice_credentials_authenticate(webservice_ready):
     assert "<searchResults" in response.text
 
 
-def test_add_citations_with_credentials_adds_columns(webservice_ready):
+def test_webservice_query_returns_notice_payload(webservice_ready):
     username, password = webservice_ready
-    df = pd.DataFrame({"CELEX IDENTIFIER": ["62019CJ0668", "62019CJ0667"]})
+    response = run_eurlex_webservice_query(
+        " SELECT CI, DN WHERE DN = 62019CJ0668", username, password
+    )
+    parsed = xmltodict.parse(response.text)
+    results = parsed["S:Envelope"]["S:Body"]["searchResults"]["result"]
 
-    add_citations_separate_webservice(df, username, password)
+    if isinstance(results, list):
+        work = results[0]["content"]["NOTICE"]["WORK"]
+    else:
+        work = results["content"]["NOTICE"]["WORK"]
 
-    assert "citing" in df.columns
-    assert "cited_by" in df.columns
+    assert "ID_CELEX" in work
+    assert "WORK_CITES_WORK" in work

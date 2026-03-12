@@ -1,6 +1,7 @@
 from io import StringIO
 
 import pandas as pd
+import pytest
 
 from cellar_extractor import citations_adder
 
@@ -26,3 +27,51 @@ def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
     assert data.loc[1, "cited_by"] == "CITED_B"
     assert data.loc[0, "citing"] == "CITING_A"
     assert data.loc[1, "citing"] == "CITING_B"
+
+
+def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch):
+    data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "B", "C"]})
+
+    def _fake_execute(cited_list, citing_list, citations):
+        cited_list.append(StringIO("celex,citedD\nA,INBOUND_A\n"))
+        citing_list.append(StringIO("celex,citedD\nB,OUTBOUND_B\n"))
+
+    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+
+    citations_adder.add_citations_separate(data, threads=2)
+
+    assert data.loc[0, "cited_by"] == "INBOUND_A"
+    assert data.loc[0, "citing"] == ""
+    assert data.loc[1, "cited_by"] == ""
+    assert data.loc[1, "citing"] == "OUTBOUND_B"
+    assert data.loc[2, "cited_by"] == ""
+    assert data.loc[2, "citing"] == ""
+
+
+def test_add_citations_separate_deduplicates_relations(monkeypatch):
+    data = pd.DataFrame({"CELEX IDENTIFIER": ["A"]})
+
+    def _fake_execute(cited_list, citing_list, citations):
+        cited_list.append(StringIO("celex,citedD\nA,X\nA,X\nA,Y\n"))
+        citing_list.append(StringIO("celex,citedD\nA,Z\nA,Z\n"))
+
+    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+
+    citations_adder.add_citations_separate(data, threads=1)
+
+    assert data.loc[0, "cited_by"] == "X;Y"
+    assert data.loc[0, "citing"] == "Z"
+
+
+def test_add_citations_separate_webservice_warns_on_use(monkeypatch):
+    data = pd.DataFrame({"CELEX IDENTIFIER": ["62019CJ0668"]})
+
+    class _Response:
+        status_code = 200
+        text = "<searchResults/>"
+
+    monkeypatch.setattr(citations_adder, "run_eurlex_webservice_query", lambda *_args: _Response())
+    monkeypatch.setattr(citations_adder, "execute_citations_webservice", lambda *args: None)
+
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        citations_adder.add_citations_separate_webservice(data, "user", "pass")

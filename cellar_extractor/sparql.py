@@ -61,7 +61,7 @@ def get_citations(source_celex, cites_depth=1, cited_depth=1, max_retries=3):
     sparql.setReturnFormat(JSON)
     sparql.setQuery(
         """
-        prefix cdm: <https://publications.europa.eu/ontology/cdm#>
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         prefix xsd: <http://www.w3.org/2001/XMLSchema#>
 
         SELECT DISTINCT * WHERE
@@ -107,7 +107,7 @@ def get_citations_csv(celex, max_retries=3):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     input_celex = '", "'.join(celex)
     query = """
-           prefix cdm: <https://publications.europa.eu/ontology/cdm#>
+           prefix cdm: <http://publications.europa.eu/ontology/cdm#>
  prefix xsd: <http://www.w3.org/2001/XMLSchema#>
 
         SELECT DISTINCT * WHERE
@@ -149,7 +149,7 @@ def get_citing(celex, cites_depth, max_retries=3):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     input_celex = '", "'.join(celex)
     query = """
-           prefix cdm: <https://publications.europa.eu/ontology/cdm#>
+           prefix cdm: <http://publications.europa.eu/ontology/cdm#>
  prefix xsd: <http://www.w3.org/2001/XMLSchema#>
 
         SELECT DISTINCT * WHERE
@@ -182,7 +182,7 @@ def get_cited(celex, cited_depth, max_retries=3):
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     input_celex = '", "'.join(celex)
     query = """
-           prefix cdm: <https://publications.europa.eu/ontology/cdm#>
+           prefix cdm: <http://publications.europa.eu/ontology/cdm#>
  prefix xsd: <http://www.w3.org/2001/XMLSchema#>
 
         SELECT DISTINCT * WHERE
