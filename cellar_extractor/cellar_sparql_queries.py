@@ -1,6 +1,8 @@
 from SPARQLWrapper import JSON, SPARQLWrapper
 from bs4 import BeautifulSoup
 
+from cellar_extractor.sparql import _build_citation_query, _extract_citation_targets
+
 
 class CellarSparqlQuery:
     def __init__(self):
@@ -147,35 +149,6 @@ class CellarSparqlQuery:
         it simply finds anything X or fewer hops away without linking those
         together.
         """
-        self.sparql.setQuery(
-            """
-            prefix cdm: <http://publications.europa.eu/ontology/cdm#>
-            prefix xsd: <http://www.w3.org/2001/XMLSchema#>
-
-            SELECT DISTINCT * WHERE
-            {
-            {
-                SELECT ?name2 WHERE {
-                    ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                    ?doc cdm:work_cites_work{1,%i} ?cited .
-                    ?cited cdm:resource_legal_id_celex ?name2 .
-                }
-            } UNION {
-                SELECT ?name2 WHERE {
-                    ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                    ?cited cdm:work_cites_work{1,%i} ?doc .
-                    ?cited cdm:resource_legal_id_celex ?name2 .
-                }
-            }
-            }"""
-            % (source_celex, cites_depth, source_celex, cited_depth)
-        )
+        self.sparql.setQuery(_build_citation_query(source_celex, cites_depth, cited_depth))
         ret = self.sparql.queryAndConvert()
-
-        targets = set()
-        for bind in ret["results"]["bindings"]:
-            target = bind["name2"]["value"]
-            targets.add(target)
-        targets = list(set([el for el in list(targets)]))
-
-        return targets
+        return list(_extract_citation_targets(ret))

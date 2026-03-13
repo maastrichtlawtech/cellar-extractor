@@ -6,6 +6,7 @@ from SPARQLWrapper import JSON, POST, SPARQLWrapper
 
 from cellar_extractor.citations_adder import add_citations_separate
 from cellar_extractor.nodes_and_edges import get_edges_list
+from cellar_extractor.sparql import get_citations
 
 
 pytestmark = pytest.mark.skipif(
@@ -102,3 +103,16 @@ def test_live_nodes_and_edges_counts_match_dataframe_relations(citation_df):
     assert set(global_nodes) == expected_global_nodes
     assert set(local_edges) == expected_local_edges
     assert set(local_nodes) == set(SAMPLE_CELEXES)
+
+
+def test_live_local_edges_match_single_source_outbound_queries(citation_df):
+    local_edges, _ = get_edges_list(citation_df, only_local=True)
+    sample_set = set(SAMPLE_CELEXES)
+    expected_edges = set()
+
+    for source in SAMPLE_CELEXES:
+        targets = get_citations(source, cites_depth=1, cited_depth=0)
+        for target in targets & sample_set:
+            expected_edges.add(f"{source},{target}")
+
+    assert set(local_edges) == expected_edges

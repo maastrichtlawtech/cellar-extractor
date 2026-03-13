@@ -12,6 +12,55 @@ def _query_with_retries(sparql, retries, error_message):
     raise RuntimeError(error_message) from last_error
 
 
+def _build_citation_query(source_celex, cites_depth, cited_depth):
+    if cites_depth < 0 or cited_depth < 0:
+        raise ValueError("Citation depths must be non-negative")
+
+    subqueries = []
+    if cites_depth > 0:
+        subqueries.append(
+            """
+            SELECT ?name2 WHERE {
+                ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
+                ?doc cdm:work_cites_work{1,%i} ?cited .
+                ?cited cdm:resource_legal_id_celex ?name2 .
+            }
+            """
+            % (source_celex, cites_depth)
+        )
+    if cited_depth > 0:
+        subqueries.append(
+            """
+            SELECT ?name2 WHERE {
+                ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
+                ?cited cdm:work_cites_work{1,%i} ?doc .
+                ?cited cdm:resource_legal_id_celex ?name2 .
+            }
+            """
+            % (source_celex, cited_depth)
+        )
+
+    if not subqueries:
+        raise ValueError("At least one citation depth must be greater than zero")
+
+    return """
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        prefix xsd: <http://www.w3.org/2001/XMLSchema#>
+
+        SELECT DISTINCT * WHERE {
+            %s
+        }
+    """ % " UNION ".join("{%s}" % subquery for subquery in subqueries)
+
+
+def _extract_citation_targets(result):
+    targets = set()
+    for bind in result["results"]["bindings"]:
+        target = bind["name2"]["value"]
+        targets.add(target)
+    return targets
+
+
 def run_eurlex_webservice_query(query_input, username, password):
     target = "https://eur-lex.europa.eu/EURLexWebService?wsdl"
     query = """<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:sear="http://eur-lex.europa.eu/search">
@@ -59,39 +108,14 @@ def get_citations(source_celex, cites_depth=1, cited_depth=1, max_retries=3):
     """
     sparql = SPARQLWrapper("https://publications.europa.eu/webapi/rdf/sparql")
     sparql.setReturnFormat(JSON)
-    sparql.setQuery(
-        """
-        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
-        prefix xsd: <http://www.w3.org/2001/XMLSchema#>
-
-        SELECT DISTINCT * WHERE
-        {
-        {
-            SELECT ?name2 WHERE {
-                ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                ?doc cdm:work_cites_work{1,%i} ?cited .
-                ?cited cdm:resource_legal_id_celex ?name2 .
-            }
-        } UNION {
-            SELECT ?name2 WHERE {
-                ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                ?cited cdm:work_cites_work{1,%i} ?doc .
-                ?cited cdm:resource_legal_id_celex ?name2 .
-            }
-        }
-        }"""
-        % (source_celex, cites_depth, source_celex, cited_depth)
-    )
+    sparql.setQuery(_build_citation_query(source_celex, cites_depth, cited_depth))
     ret = _query_with_retries(
         sparql,
         retries=max_retries,
         error_message="Failed to fetch citations after retries",
     )
-    targets = set()
-    for bind in ret["results"]["bindings"]:
-        target = bind["name2"]["value"]
-        targets.add(target)
     # Filters the list. Filter type: '3'=legislation, '6'=case law.
+    targets = _extract_citation_targets(ret)
     targets = set([el for el in list(targets)])
     return targets
 
