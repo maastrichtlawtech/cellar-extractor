@@ -80,7 +80,7 @@ The citation graph is now extracted through the public CELLAR SPARQL endpoint. L
 import cellar_extractor as cell
 
 df = cell.get_cellar(
-    save_file="n",
+    save=False,
     file_format="csv",
     sd="2025-01-01",
     ed="2025-01-31T23:59:59",
@@ -90,13 +90,25 @@ df = cell.get_cellar(
 
 Returns a dataframe with base metadata such as CELEX, ECLI, type, dates, and subject-matter-related fields.
 
+You can also save explicitly to a custom path instead of the default `data/` location:
+
+```python
+cell.get_cellar(
+    save=True,
+    file_format="csv",
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    output_path="exports/cellar_january.csv",
+)
+```
+
 ### 2. Fetch The Enriched Dataset
 
 ```python
 import cellar_extractor as cell
 
 extra_df, fulltext = cell.get_cellar_extra(
-    save_file="n",
+    save=False,
     sd="2025-01-01",
     ed="2025-01-31T23:59:59",
     max_ecli=100,
@@ -108,6 +120,19 @@ Returns:
 
 - `extra_df`: enriched dataframe
 - `fulltext`: list of JSON rows containing extracted text and provenance
+
+You can independently control where the enriched CSV and fulltext JSON are written:
+
+```python
+cell.get_cellar_extra(
+    save=True,
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    metadata_output_path="exports/cellar_extra.csv",
+    fulltext_output_path="exports/cellar_fulltext.json",
+    threads=4,
+)
+```
 
 ### 3. Build A Citation Graph
 
@@ -141,7 +166,7 @@ Practical guidance:
 
 - use month-sized or week-sized windows for stability
 - keep `threads` moderate, typically `4` to `10`
-- use `save_file="y"` for long runs
+- use `save=True` for long runs
 - keep the fulltext JSON files; they are the canonical extracted text output
 
 Example file-based run:
@@ -150,7 +175,7 @@ Example file-based run:
 import cellar_extractor as cell
 
 cell.get_cellar_extra(
-    save_file="y",
+    save=True,
     sd="2025-01-01",
     ed="2025-01-31T23:59:59",
     max_ecli=5000,
@@ -158,7 +183,7 @@ cell.get_cellar_extra(
 )
 ```
 
-This writes into `data/`:
+By default this writes into `data/`:
 
 - a CSV with the enriched tabular dataset
 - a `_fulltext.json` file with the text rows
@@ -234,14 +259,17 @@ Imported from [`cellar_extractor/__init__.py`](/Users/davidwickerhf/Projects/wor
 
 #### [`cellar_extractor/cellar.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/cellar.py)
 
-- `get_cellar(ed=None, save_file="y", max_ecli=100, sd="2022-05-01", file_format="csv")`
-- `get_cellar_extra(ed=None, save_file="y", max_ecli=100, sd="2022-05-01", threads=10, username="", password="")`
+- `get_cellar(ed=None, save_file=<deprecated>, max_ecli=100, sd="2022-05-01", file_format="csv", output_dir="data", output_path=None, return_data=None, save=None)`
+- `get_cellar_extra(ed=None, save_file=<deprecated>, max_ecli=100, sd="2022-05-01", threads=10, username="", password="", output_dir="data", metadata_output_path=None, fulltext_output_path=None, save_metadata=None, save_fulltext=None, return_data=None, save=None)`
 - `get_nodes_and_edges_lists(df=None, only_local=False)`
 - `filter_subject_matter(df=None, phrase=None)`
 
 Notes:
 
 - `username` / `password` are legacy compatibility parameters and no longer change the extraction path
+- `save` is the preferred save toggle; `save_file` is kept as a deprecated compatibility alias
+- `output_path`, `metadata_output_path`, and `fulltext_output_path` let callers choose exact output locations instead of relying on fixed folders
+- when save flags are disabled, the package returns in-memory objects without writing files
 
 #### [`cellar_extractor/citations_adder.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/citations_adder.py)
 
@@ -251,7 +279,7 @@ Notes:
 
 #### [`cellar_extractor/fulltext_saving.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/fulltext_saving.py)
 
-- `add_sections(data, threads, json_filepath=None)`: enriches summaries, keywords, text metadata, provenance, and missing-data flags
+- `add_sections(data, threads, output_path=None, json_filepath=None, fulltext_output_path=None)`: enriches summaries, keywords, text metadata, provenance, and missing-data flags
 
 #### [`cellar_extractor/eurlex_scraping.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/eurlex_scraping.py)
 

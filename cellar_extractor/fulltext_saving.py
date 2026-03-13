@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import warnings
 import pandas as pd
 from cellar_extractor.eurlex_scraping import (
     get_case_data_by_celex_id,
@@ -16,6 +17,7 @@ from cellar_extractor.eurlex_scraping import (
     get_case_affecting,
     get_citations_with_extra_info,
 )
+from cellar_extractor.persistence import write_json
 from tqdm import tqdm
 
 
@@ -199,7 +201,13 @@ def execute_sections_threads(
     list_missing_reasons.append(missing_reasons)
 
 
-def add_sections(data, threads, json_filepath=None):
+def add_sections(
+    data,
+    threads,
+    output_path=None,
+    json_filepath=None,
+    fulltext_output_path=None,
+):
     """
     This method adds the following sections to a pandas dataframe,
     as separate columns:
@@ -216,6 +224,9 @@ def add_sections(data, threads, json_filepath=None):
     https://eur-lex.europa.eu/homepage.html.
     It operates with multiple threads, using that feature is recommended
     as it speeds up the entire process.
+
+    Preferred persistence uses `output_path`. The older `json_filepath`
+    and `fulltext_output_path` parameters are kept as deprecated aliases.
     """
     source_indices = data.index.tolist()
     celex = data.loc[:, "CELEX IDENTIFIER"].reset_index(drop=True)
@@ -295,11 +306,26 @@ def add_sections(data, threads, json_filepath=None):
     for _item in list_full:
         if len(_item) > 0:
             json_file.extend(_item)
-    if json_filepath:
-        with open(json_filepath, "w", encoding="utf-8") as f:
-            json.dump(json_file, f)
-    else:
-        return json_file
+    if json_filepath is not None:
+        warnings.warn(
+            "`json_filepath` is deprecated; use `output_path` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if output_path is None:
+            output_path = json_filepath
+    if fulltext_output_path is not None:
+        warnings.warn(
+            "`fulltext_output_path` is deprecated; use `output_path` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        if output_path is None:
+            output_path = fulltext_output_path
+
+    if output_path:
+        write_json(json_file, output_path)
+    return json_file
 
 
 def add_column_frow_list(data, name, list):

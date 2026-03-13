@@ -1,4 +1,5 @@
 import json
+import pytest
 
 import pandas as pd
 
@@ -67,11 +68,42 @@ def test_add_sections_writes_valid_json_file_with_multiple_threads(monkeypatch, 
     )
     output_file = tmp_path / "fulltext.json"
 
-    fulltext_saving.add_sections(data, threads=4, json_filepath=str(output_file))
+    fulltext_saving.add_sections(data, threads=4, output_path=str(output_file))
 
     written = json.loads(output_file.read_text(encoding="utf-8"))
     assert isinstance(written, list)
     assert len(written) == 12
+
+
+def test_add_sections_in_memory_does_not_create_files(monkeypatch, tmp_path):
+    _mock_scrapers(monkeypatch)
+    data = pd.DataFrame(
+        {
+            "CELEX IDENTIFIER": ["62000CJ0001"],
+            "ECLI": ["E1"],
+        }
+    )
+
+    fulltext = fulltext_saving.add_sections(data, threads=1)
+
+    assert len(fulltext) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_add_sections_json_filepath_alias_warns_and_writes(monkeypatch, tmp_path):
+    _mock_scrapers(monkeypatch)
+    data = pd.DataFrame(
+        {
+            "CELEX IDENTIFIER": ["62000CJ0001"],
+            "ECLI": ["E1"],
+        }
+    )
+    output_file = tmp_path / "nested" / "fulltext.json"
+
+    with pytest.warns(DeprecationWarning, match="output_path"):
+        fulltext_saving.add_sections(data, threads=1, json_filepath=str(output_file))
+
+    assert output_file.exists()
 
 
 def test_add_sections_marks_missing_reasons_for_empty_infocuria_fields(monkeypatch):

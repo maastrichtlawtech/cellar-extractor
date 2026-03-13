@@ -1,9 +1,10 @@
 import csv
 import json
-import os
 import requests
 from bs4 import BeautifulSoup
 from SPARQLWrapper import JSON, SPARQLWrapper
+
+from cellar_extractor.persistence import ensure_parent_dir
 
 
 class FetchOperativePart:
@@ -382,41 +383,52 @@ class Writing:
     x: str
     parameter: str
 
-    current_dir = os.getcwd()
-
-    txt_dir = os.path.join(current_dir, "txt")
-    csv_dir = os.path.join(current_dir, "csv")
-    json_dir = os.path.join(current_dir, "json")
-
-    if not os.path.exists(txt_dir):
-        os.makedirs(txt_dir)
-    if not os.path.exists(csv_dir):
-        os.makedirs(csv_dir)
-
-    if not os.path.exists(json_dir):
-        os.makedirs(json_dir)
-
     def __init__(self, celex: str):
         self.celex = celex
         self.instance = FetchOperativePart(self.celex)
         self.x = self.instance()
 
-    def to_csv(self):
-        _file = open("csv/output.csv", "a+", encoding="utf-8")
-        writer = csv.writer(_file)
-        if self.x is not None:
-            writer.writerow([self.celex, self.x])
+    def as_dict(self):
+        return {"Celex": self.celex, "Operative part": self.x}
 
-    def to_json(self):
-        if self.x is not None:
-            data = {"Celex": self.celex, "Operative part": self.x}
-            _file = open("json/data.json", "a+", encoding="utf-8")
-            json.dump(data, _file)
-            _file.close()
+    def to_csv(self, output_path):
+        """Write operative-part data to a CSV file at `output_path`."""
+        if self.x is None:
+            return
+        target = ensure_parent_dir(output_path)
+        is_new_file = not target.exists()
+        with target.open("a+", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            if is_new_file:
+                writer.writerow(["Celex", "Operative part"])
+            writer.writerow([self.celex, json.dumps(self.x, ensure_ascii=False)])
 
-    def to_txt(self):
-        if self.x is not None:
-            _file = open(f"txt/{self.celex}.txt", "a", encoding="utf-8")
-            for w in self.x:
-                _file.write(w + "\n")
-            _file.close()
+    def to_json(self, output_path):
+        """Write operative-part data to a JSON file at `output_path`."""
+        if self.x is None:
+            return
+        target = ensure_parent_dir(output_path)
+        payload = self.as_dict()
+        items = []
+        if target.exists():
+            try:
+                with target.open("r", encoding="utf-8") as handle:
+                    existing = json.load(handle)
+                if isinstance(existing, list):
+                    items = existing
+                elif existing:
+                    items = [existing]
+            except (json.JSONDecodeError, OSError):
+                items = []
+        items.append(payload)
+        with target.open("w", encoding="utf-8") as handle:
+            json.dump(items, handle)
+
+    def to_txt(self, output_path):
+        """Write operative-part data to a text file at `output_path`."""
+        if self.x is None:
+            return
+        target = ensure_parent_dir(output_path)
+        with target.open("w", encoding="utf-8") as handle:
+            for value in self.x:
+                handle.write(value + "\n")

@@ -1,7 +1,9 @@
 import glob
 import argparse
 import logging
+from pathlib import Path
 from cellar_extractor.json_to_csv import read_csv
+from cellar_extractor.persistence import write_dataframe_csv
 
 
 def extract_rows(data, number):
@@ -26,13 +28,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--amount", help="number of rows to extract", type=int, required=True
     )
+    parser.add_argument(
+        "--input-dir",
+        help="directory containing CSV files to trim",
+        default=".",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="directory where trimmed CSV files will be written",
+        required=True,
+    )
     args = parser.parse_args()
     number = args.amount
     print("")
     print("EXTRACTION FROM CSV FILE IN DATA PROCESSED DIR STARTED")
     print("")
-    DIR_DATA_RAW = ""
-    csv_files = glob.glob(DIR_DATA_RAW + "/" + "*.csv")
+    csv_files = glob.glob(args.input_dir + "/" + "*.csv")
     print(f"FOUND {len(csv_files)} CSV FILES")
 
     for i in range(len(csv_files)):
@@ -43,8 +54,9 @@ if __name__ == "__main__":
             print(f"EXTRACTING FROM {csv_files[i]} ")
             data = read_csv(csv_files[i])
             output = extract_rows(data, number)
-            output_path = "/tester_100.csv"
-            output.to_csv(output_path, index=False)
+            filename = Path(csv_files[i]).name
+            output_path = str(Path(args.output_dir) / filename)
+            write_dataframe_csv(output, output_path)
     print("")
     print("Extraction DONE")
     print("")
