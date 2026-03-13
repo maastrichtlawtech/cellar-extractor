@@ -1,0 +1,158 @@
+import re
+
+import pytest
+
+from cellar_extractor import cellar_queries
+
+
+class _FakeSparql:
+    def __init__(self, payload):
+        self.payload = payload
+        self.query = ""
+        self.method = None
+
+    def setReturnFormat(self, *_args, **_kwargs):
+        return None
+
+    def setMethod(self, method):
+        self.method = method
+
+    def setQuery(self, query):
+        self.query = query
+
+    def queryAndConvert(self):
+        return self.payload
+
+
+def test_get_all_eclis_includes_limit_when_requested(monkeypatch):
+    payload = {"results": {"bindings": [{"ecli": {"value": "ECLI:EU:C:2025:1"}}]}}
+    fake = _FakeSparql(payload)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    result = cellar_queries.get_all_eclis(
+        starting_date="2025-01-01",
+        ending_date="2025-01-31",
+        limit=1,
+    )
+
+    assert result == ["ECLI:EU:C:2025:1"]
+    assert "LIMIT 1" in fake.query
+    assert 'FILTER(STR(?date) >= "2025-01-01")' in fake.query
+    assert 'FILTER(STR(?date) <= "2025-01-31")' in fake.query
+
+
+def test_get_raw_cellar_metadata_filters_requested_eclis(monkeypatch):
+    payload = {
+        "results": {
+            "bindings": [
+                {
+                    "ecli": {"value": "ECLI:EU:C:2025:1"},
+                    "p": {"value": "http://publications.europa.eu/ontology/cdm#case-law_ecli"},
+                    "plabel": {"value": "ECLI"},
+                    "o": {"value": "ECLI:EU:C:2025:1"},
+                }
+            ]
+        }
+    }
+    fake = _FakeSparql(payload)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    result = cellar_queries.get_raw_cellar_metadata(["ECLI:EU:C:2025:1"])
+
+    assert result["ECLI:EU:C:2025:1"]["ECLI"] == ["ECLI:EU:C:2025:1"]
+    assert 'FILTER(STR(?ecli) in ("ECLI:EU:C:2025:1"))' in fake.query
+    assert fake.method == cellar_queries.POST
+
+
+class _WindowedFakeSparql:
+    def __init__(self, responses):
+        self.responses = responses
+        self.query = ""
+        self.queries = []
+
+    def setReturnFormat(self, *_args, **_kwargs):
+        return None
+
+    def setMethod(self, *_args, **_kwargs):
+        return None
+
+    def setQuery(self, query):
+        self.query = query
+        self.queries.append(query)
+
+    def queryAndConvert(self):
+        start = re.search(r'FILTER\(STR\(\?date\) >= "([^"]+)"\)', self.query).group(1)
+        end = re.search(r'FILTER\(STR\(\?date\) <= "([^"]+)"\)', self.query).group(1)
+        return self.responses[(start, end)]
+
+
+def test_get_all_eclis_chunks_large_sorted_requests(monkeypatch):
+    responses = {
+        ("2025-01-01", "2025-01-02"): {
+            "results": {
+                "bindings": [
+                    {"ecli": {"value": "ECLI:EU:C:2025:2"}},
+                    {"ecli": {"value": "ECLI:EU:C:2025:1"}},
+                ]
+            }
+        },
+        ("2025-01-03", "2025-01-04"): {
+            "results": {
+                "bindings": [
+                    {"ecli": {"value": "ECLI:EU:C:2025:2"}},
+                    {"ecli": {"value": "ECLI:EU:C:2025:3"}},
+                ]
+            }
+        },
+        ("2025-01-05", "2025-01-05"): {
+            "results": {"bindings": [{"ecli": {"value": "ECLI:EU:C:2025:4"}}]}
+        },
+    }
+    fake = _WindowedFakeSparql(responses)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+    monkeypatch.setattr(cellar_queries, "MAX_SORTED_TOP_LIMIT", 3)
+    monkeypatch.setattr(cellar_queries, "ECLI_WINDOW_DAYS", 2)
+
+    result = cellar_queries.get_all_eclis(
+        starting_date="2025-01-01",
+        ending_date="2025-01-05",
+        limit=50,
+    )
+
+    assert result == [
+        "ECLI:EU:C:2025:1",
+        "ECLI:EU:C:2025:2",
+        "ECLI:EU:C:2025:3",
+        "ECLI:EU:C:2025:4",
+    ]
+    assert len(fake.queries) == 3
+    assert all("LIMIT 50" not in query for query in fake.queries)
+
+
+def test_get_all_eclis_applies_large_limit_locally_after_chunking(monkeypatch):
+    responses = {
+        ("2025-01-01", "2025-01-02"): {
+            "results": {
+                "bindings": [
+                    {"ecli": {"value": "ECLI:EU:C:2025:2"}},
+                    {"ecli": {"value": "ECLI:EU:C:2025:1"}},
+                ]
+            }
+        },
+        ("2025-01-03", "2025-01-04"): {
+            "results": {"bindings": [{"ecli": {"value": "ECLI:EU:C:2025:3"}}]}
+        },
+    }
+    fake = _WindowedFakeSparql(responses)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+    monkeypatch.setattr(cellar_queries, "MAX_SORTED_TOP_LIMIT", 2)
+    monkeypatch.setattr(cellar_queries, "ECLI_WINDOW_DAYS", 2)
+
+    result = cellar_queries.get_all_eclis(
+        starting_date="2025-01-01",
+        ending_date="2025-01-04",
+        limit=3,
+    )
+
+    assert result == ["ECLI:EU:C:2025:1", "ECLI:EU:C:2025:2", "ECLI:EU:C:2025:3"]
+    assert len(fake.queries) == 2

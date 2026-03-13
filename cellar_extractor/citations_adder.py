@@ -1,4 +1,5 @@
 import sys
+import math
 import threading
 import time
 import logging
@@ -8,6 +9,7 @@ from os.path import dirname, abspath
 import pandas as pd
 from cellar_extractor.sparql import (
     get_citations_csv,
+    get_citation_relations_csv,
     get_cited,
     get_citing,
     run_eurlex_webservice_query,
@@ -16,6 +18,8 @@ from cellar_extractor.eurlex_scraping import extract_dictionary_from_webservice_
 from tqdm import tqdm
 
 sys.path.append(dirname(dirname(dirname(dirname(abspath(__file__))))))
+
+MAX_CITATION_WORKERS = 3
 
 
 def _deduplicate_preserving_order(values):
@@ -104,7 +108,7 @@ def add_citations(data, threads):
     data.insert(1, name, citations)
 
 
-def execute_citations_separate(cited_list, citing_list, citations):
+def execute_citations_separate(relations_list, citations):
     """
     Method used by separate threads for the multi-threading method of
     adding citations to the dataframe. Sends a query which returns a csv
@@ -114,10 +118,8 @@ def execute_citations_separate(cited_list, citing_list, citations):
     """
     at_once = 1000
     for i in range(0, len(citations), at_once):
-        new_cited = get_cited(citations[i : (i + at_once)], 1)
-        new_citing = get_citing(citations[i : (i + at_once)], 1)
-        cited_list.append(StringIO(new_cited))
-        citing_list.append(StringIO(new_citing))
+        new_relations = get_citation_relations_csv(citations[i : (i + at_once)], 1, 1)
+        relations_list.append(StringIO(new_relations))
 
 
 def execute_citations_webservice(dictionary_list, celexes, username, password):
@@ -321,25 +323,26 @@ def add_citations_separate(data, threads):
     """
 
     celex = data.loc[:, "CELEX IDENTIFIER"]
-    length = celex.size
+    unique_celex = [
+        value
+        for value in pd.unique(celex.fillna("").astype(str))
+        if value.strip() != ""
+    ]
+    length = len(unique_celex)
     if length == 0:
         _replace_or_insert_column(data, "citing", pd.Series([], dtype="string"))
         _replace_or_insert_column(data, "cited_by", pd.Series([], dtype="string"))
         return
 
-    threads = max(1, threads)
-    if length > 100:  # to avoid getting problems with small files
-        at_once_threads = int(length / threads)
-    else:
-        at_once_threads = length
-    cited_csv = list()
-    citing_csv = list()
+    worker_count = min(max(1, threads), MAX_CITATION_WORKERS, length)
+    chunk_size = max(1, math.ceil(length / worker_count))
+    relations_csv = list()
     threads = []
 
-    for i in range(0, length, at_once_threads):
-        curr_celex = celex[i : (i + at_once_threads)]
+    for i in range(0, length, chunk_size):
+        curr_celex = unique_celex[i : (i + chunk_size)]
         t = threading.Thread(
-            target=execute_citations_separate, args=(cited_csv, citing_csv, curr_celex)
+            target=execute_citations_separate, args=(relations_csv, curr_celex)
         )
         threads.append(t)
 
@@ -349,9 +352,15 @@ def add_citations_separate(data, threads):
     for t in threads:
         t.join()
 
-    cited = pd.concat(map(pd.read_csv, cited_csv), ignore_index=True)
-    citing = pd.concat(map(pd.read_csv, citing_csv), ignore_index=True)
+    if len(relations_csv) == 0:
+        relations = pd.DataFrame(columns=["celex", "citedD", "direction"])
+    else:
+        relations = pd.concat(map(pd.read_csv, relations_csv), ignore_index=True)
+        if "direction" not in relations.columns:
+            relations["direction"] = ""
 
+    cited = relations[relations["direction"] == "inbound"].loc[:, ["celex", "citedD"]]
+    citing = relations[relations["direction"] == "outbound"].loc[:, ["celex", "citedD"]]
     cited_map = _group_relations(cited)
     citing_map = _group_relations(citing)
 

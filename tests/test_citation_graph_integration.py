@@ -116,3 +116,20 @@ def test_live_local_edges_match_single_source_outbound_queries(citation_df):
             expected_edges.add(f"{source},{target}")
 
     assert set(local_edges) == expected_edges
+
+
+def test_live_duplicate_celex_rows_preserve_identical_citation_relations():
+    duplicated = ["62019CJ0668", "62019CJ0668", "62024CJ0131"]
+    df = pd.DataFrame({"CELEX IDENTIFIER": duplicated})
+
+    add_citations_separate(df, threads=3)
+
+    first_outbound = _normalize_relation(df.loc[0, "citing"])
+    second_outbound = _normalize_relation(df.loc[1, "citing"])
+    first_inbound = _normalize_relation(df.loc[0, "cited_by"])
+    second_inbound = _normalize_relation(df.loc[1, "cited_by"])
+
+    assert first_outbound == second_outbound
+    assert first_inbound == second_inbound
+    assert first_outbound == get_citations("62019CJ0668", cites_depth=1, cited_depth=0)
+    assert first_inbound == get_citations("62019CJ0668", cites_depth=0, cited_depth=1)

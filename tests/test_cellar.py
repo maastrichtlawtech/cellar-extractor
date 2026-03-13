@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import time
 
 import pandas as pd
 
@@ -19,7 +20,11 @@ def _base_metadata(ecli, celex):
 
 
 def test_get_cellar_csv_in_memory(monkeypatch):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1", "E2"])
+    monkeypatch.setattr(
+        cellar,
+        "get_all_eclis",
+        lambda starting_date, ending_date, limit=None: ["E1", "E2"][:limit] if limit else ["E1", "E2"],
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -43,7 +48,7 @@ def test_get_cellar_csv_in_memory(monkeypatch):
 
 
 def test_get_cellar_json_in_memory(monkeypatch):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -64,7 +69,7 @@ def test_get_cellar_json_in_memory(monkeypatch):
 
 def test_get_cellar_json_save_file(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -87,7 +92,7 @@ def test_get_cellar_json_save_file(monkeypatch, tmp_path):
 
 def test_get_cellar_in_memory_does_not_create_default_output_dir(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -106,7 +111,7 @@ def test_get_cellar_in_memory_does_not_create_default_output_dir(monkeypatch, tm
 
 
 def test_get_cellar_save_file_supports_custom_output_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -130,7 +135,7 @@ def test_get_cellar_save_file_supports_custom_output_path(monkeypatch, tmp_path)
 
 
 def test_get_cellar_save_to_output_dir_creates_only_requested_parents(monkeypatch, tmp_path):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -150,6 +155,66 @@ def test_get_cellar_save_to_output_dir_creates_only_requested_parents(monkeypatc
     assert output_dir.exists()
     assert any(output_dir.iterdir())
     assert not (tmp_path / "data").exists()
+
+
+def test_get_cellar_passes_limit_to_ecli_lookup(monkeypatch):
+    seen = {}
+
+    def _fake_get_all_eclis(starting_date, ending_date, limit=None):
+        seen["limit"] = limit
+        return ["E1"]
+
+    monkeypatch.setattr(cellar, "get_all_eclis", _fake_get_all_eclis)
+    monkeypatch.setattr(
+        cellar,
+        "get_raw_cellar_metadata",
+        lambda eclis: _base_metadata("E1", "62025CJ0001"),
+    )
+
+    cellar.get_cellar(
+        ed="2025-01-02T00:00:00",
+        save=False,
+        max_ecli=1,
+        sd="2025-01-01",
+        file_format="csv",
+    )
+
+    assert seen["limit"] == 1
+
+
+def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkeypatch):
+    eclis = [f"ECLI:EU:C:2025:{index}" for index in range(105)]
+    monkeypatch.setattr(
+        cellar,
+        "get_all_eclis",
+        lambda starting_date, ending_date, limit=None: eclis[:limit] if limit else eclis,
+    )
+
+    def _fake_get_raw_cellar_metadata(batch):
+        if batch[0] == eclis[0]:
+            time.sleep(0.05)
+        return {
+            ecli: {
+                "ECLI": [ecli],
+                "CELEX IDENTIFIER": [f"6{index:09d}"],
+                "DATE OF DOCUMENT": ["2025-01-01"],
+                "TYPE OF LEGAL RESOURCE": ["CJ"],
+                "SECTOR IDENTIFIER": ["6"],
+            }
+            for index, ecli in enumerate(batch)
+        }
+
+    monkeypatch.setattr(cellar, "get_raw_cellar_metadata", _fake_get_raw_cellar_metadata)
+
+    df = cellar.get_cellar(
+        ed="2025-01-02T00:00:00",
+        save=False,
+        max_ecli=105,
+        sd="2025-01-01",
+        file_format="csv",
+    )
+
+    assert df["ECLI"].tolist() == eclis
 
 
 def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
@@ -270,7 +335,7 @@ def test_get_cellar_extra_in_memory_does_not_create_default_output_dir(monkeypat
 
 
 def test_get_cellar_save_file_alias_still_works(monkeypatch):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date: ["E1"])
+    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",

@@ -147,8 +147,12 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
         requested_urls.append(url)
         return _FakeResponse(200, "<html><body>judgment text</body></html>")
 
+    class _FakeSession:
+        def get(self, url, timeout=60):
+            return _fake_get(url, timeout=timeout)
+
     monkeypatch.setattr(eurlex_scraping, "_post_json", _fake_post)
-    monkeypatch.setattr(eurlex_scraping.requests, "get", _fake_get)
+    monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
 
     data = eurlex_scraping.get_case_data_by_celex_id("62024CJ0131", language="EN")
 

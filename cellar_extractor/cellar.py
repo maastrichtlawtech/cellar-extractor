@@ -1,7 +1,6 @@
-import json
-import time
 from datetime import datetime
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 from cellar_extractor.cellar_extra_extract import extra_cellar
@@ -15,6 +14,9 @@ from cellar_extractor.persistence import (
     write_dataframe_csv,
     write_json,
 )
+
+METADATA_BATCH_SIZE = 100
+MAX_METADATA_WORKERS = 3
 
 
 def _build_output_stem(prefix, sd, ed):
@@ -34,6 +36,28 @@ def _write_cellar_output(result, file_format, output_path):
         write_dataframe_csv(result, output_path)
     else:
         write_json(result, output_path)
+
+
+def _fetch_metadata_batches(eclis, batch_size=METADATA_BATCH_SIZE):
+    batches = [eclis[i : i + batch_size] for i in range(0, len(eclis), batch_size)]
+    if not batches:
+        return {}
+
+    worker_count = min(MAX_METADATA_WORKERS, len(batches))
+    batch_results = [None] * len(batches)
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_to_index = {
+            executor.submit(get_raw_cellar_metadata, batch): index
+            for index, batch in enumerate(batches)
+        }
+        for future in tqdm(future_to_index, total=len(future_to_index), colour="GREEN"):
+            batch_results[future_to_index[future]] = future.result()
+
+    metadata = {}
+    for batch_result in batch_results:
+        metadata.update(batch_result)
+    return metadata
 
 
 def get_cellar(
@@ -65,19 +89,12 @@ def get_cellar(
     logging.info("\n--- PREPARATION ---\n")
     logging.info(f"Starting from specified start date: {sd}")
     logging.info(f"Up until the specified end date {ed}")
-    eclis = get_all_eclis(starting_date=sd, ending_date=ed)
+    eclis = get_all_eclis(starting_date=sd, ending_date=ed, limit=max_ecli)
     logging.info(f"Found {len(eclis)} ECLIs")
-    time.sleep(1)
-    if len(eclis) > max_ecli:
-        eclis = eclis[:max_ecli]
     if len(eclis) == 0:
         logging.info(f"No data to download found between {sd} and {ed}")
         return False
-    all_eclis = {}
-    concurrent_docs = 100
-    for i in tqdm(range(0, len(eclis), concurrent_docs), colour="GREEN"):
-        new_eclis = get_raw_cellar_metadata(eclis[i : (i + concurrent_docs)])
-        all_eclis = {**all_eclis, **new_eclis}
+    all_eclis = _fetch_metadata_batches(eclis)
 
     result = _materialize_cellar_output(all_eclis, file_format)
     if save_enabled:

@@ -42,3 +42,17 @@ def test_get_citations_omits_reverse_branch_when_cited_depth_zero(monkeypatch):
 def test_get_citations_requires_positive_depth():
     with pytest.raises(ValueError, match="greater than zero"):
         sparql.get_citations("62000CJ0003", cites_depth=0, cited_depth=0)
+
+
+def test_get_citation_relations_csv_builds_single_query_for_both_directions(monkeypatch):
+    payload = b"celex,citedD,direction\nA,X,outbound\nA,Y,inbound\n"
+    fake = _FakeSparql(payload)
+    fake.setMethod = lambda *_args, **_kwargs: None
+    monkeypatch.setattr(sparql, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    result = sparql.get_citation_relations_csv(["A"], cites_depth=1, cited_depth=1)
+
+    assert result == payload.decode("utf-8")
+    assert 'BIND("outbound" AS ?direction)' in fake.query
+    assert 'BIND("inbound" AS ?direction)' in fake.query
+    assert fake.query.count("FILTER(STR(?celex) in (\"A\"))") == 2

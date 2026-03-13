@@ -12,6 +12,52 @@ def _query_with_retries(sparql, retries, error_message):
     raise RuntimeError(error_message) from last_error
 
 
+def _build_citation_relations_query(celexes, cites_depth=1, cited_depth=1):
+    if cites_depth < 0 or cited_depth < 0:
+        raise ValueError("Citation depths must be non-negative")
+
+    input_celex = '", "'.join(celexes)
+    subqueries = []
+    if cites_depth > 0:
+        subqueries.append(
+            """
+            SELECT ?celex ?citedD ?direction WHERE {
+                ?doc cdm:resource_legal_id_celex ?celex .
+                FILTER(STR(?celex) in ("%s")) .
+                ?doc cdm:work_cites_work{1,%i} ?cited .
+                ?cited cdm:resource_legal_id_celex ?citedD .
+                BIND("outbound" AS ?direction)
+            }
+            """
+            % (input_celex, cites_depth)
+        )
+    if cited_depth > 0:
+        subqueries.append(
+            """
+            SELECT ?celex ?citedD ?direction WHERE {
+                ?doc cdm:resource_legal_id_celex ?celex .
+                FILTER(STR(?celex) in ("%s")) .
+                ?cited cdm:work_cites_work{1,%i} ?doc .
+                ?cited cdm:resource_legal_id_celex ?citedD .
+                BIND("inbound" AS ?direction)
+            }
+            """
+            % (input_celex, cited_depth)
+        )
+
+    if not subqueries:
+        raise ValueError("At least one citation depth must be greater than zero")
+
+    return """
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        prefix xsd: <http://www.w3.org/2001/XMLSchema#>
+
+        SELECT DISTINCT * WHERE {
+            %s
+        }
+    """ % " UNION ".join("{%s}" % subquery for subquery in subqueries)
+
+
 def _build_citation_query(source_celex, cites_depth, cited_depth):
     if cites_depth < 0 or cited_depth < 0:
         raise ValueError("Citation depths must be non-negative")
@@ -165,6 +211,26 @@ def get_citations_csv(celex, max_retries=3):
         sparql,
         retries=max_retries,
         error_message="Failed to fetch citations CSV after retries",
+    )
+    return ret.decode("utf-8")
+
+
+def get_citation_relations_csv(celex, cites_depth=1, cited_depth=1, max_retries=3):
+    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
+    query = _build_citation_relations_query(
+        celex,
+        cites_depth=cites_depth,
+        cited_depth=cited_depth,
+    )
+
+    sparql = SPARQLWrapper(endpoint)
+    sparql.setReturnFormat(CSV)
+    sparql.setMethod(POST)
+    sparql.setQuery(query)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to fetch citation relations after retries",
     )
     return ret.decode("utf-8")
 

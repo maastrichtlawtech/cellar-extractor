@@ -55,3 +55,31 @@ def test_mixed_sector_add_sections_live_uses_non_legacy_paths():
     assert df.loc[1, "fulltext_source"] == "CELLAR_ITEM"
     assert df.loc[1, "summary_source"] == "CELLAR_SUMMARY_ITEM"
     assert df.loc[1, "missing_reasons"] == ""
+
+
+def test_live_add_sections_keeps_duplicate_celex_rows_consistent():
+    df = pd.DataFrame(
+        {
+            "CELEX IDENTIFIER": [
+                "62024CJ0131",
+                "62024CJ0131",
+                "82010AT0127(51)",
+                "82010AT0127(51)",
+            ],
+            "ECLI": [
+                "ECLI:EU:C:2026:172",
+                "ECLI:EU:C:2026:172",
+                "ECLI:AT:OGH0002:2010:0030OB00251.09X.0127.000",
+                "ECLI:AT:OGH0002:2010:0030OB00251.09X.0127.000",
+            ],
+        }
+    )
+
+    add_sections(df, threads=4)
+
+    assert df.loc[0, "fulltext_source"] == df.loc[1, "fulltext_source"]
+    assert df.loc[0, "summary_source"] == df.loc[1, "summary_source"]
+    assert df.loc[0, "celex_summary"] == df.loc[1, "celex_summary"]
+    assert df.loc[2, "fulltext_source"] == df.loc[3, "fulltext_source"]
+    assert df.loc[2, "summary_source"] == df.loc[3, "summary_source"]
+    assert df.loc[2, "celex_summary"] == df.loc[3, "celex_summary"]

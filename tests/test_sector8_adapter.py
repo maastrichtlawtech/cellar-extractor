@@ -65,7 +65,11 @@ def test_extract_item_payload_parses_html(monkeypatch):
         content = text.encode("utf-8")
         headers = {"content-type": "text/html;charset=UTF-8"}
 
-    monkeypatch.setattr(eurlex_scraping.requests, "get", lambda *args, **kwargs: _Resp())
+    class _FakeSession:
+        def get(self, *args, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
     text, markup, fmt = eurlex_scraping._extract_item_payload("https://example.com/item", "xhtml")
 
     assert "Hello" in text
@@ -80,7 +84,11 @@ def test_extract_item_payload_parses_pdf(monkeypatch):
         content = b"%PDF-1.4 mock"
         headers = {"content-type": "application/pdf"}
 
-    monkeypatch.setattr(eurlex_scraping.requests, "get", lambda *args, **kwargs: _Resp())
+    class _FakeSession:
+        def get(self, *args, **kwargs):
+            return _Resp()
+
+    monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
     monkeypatch.setattr(eurlex_scraping, "_parse_text_from_pdf", lambda content: "Extracted PDF text")
 
     text, markup, fmt = eurlex_scraping._extract_item_payload("https://example.com/item", "pdf")

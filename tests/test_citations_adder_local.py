@@ -15,9 +15,16 @@ def test_allowed_id_accepts_celex_prefix_6_or_8():
 def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
     data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "B"]})
 
-    def _fake_execute(cited_list, citing_list, citations):
-        cited_list.append(StringIO("celex,citedD\nA,CITED_A\nB,CITED_B\n"))
-        citing_list.append(StringIO("celex,citedD\nA,CITING_A\nB,CITING_B\n"))
+    def _fake_execute(relations_list, citations):
+        relations_list.append(
+            StringIO(
+                "celex,citedD,direction\n"
+                "A,CITED_A,inbound\n"
+                "B,CITED_B,inbound\n"
+                "A,CITING_A,outbound\n"
+                "B,CITING_B,outbound\n"
+            )
+        )
 
     monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
 
@@ -32,9 +39,14 @@ def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
 def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch):
     data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "B", "C"]})
 
-    def _fake_execute(cited_list, citing_list, citations):
-        cited_list.append(StringIO("celex,citedD\nA,INBOUND_A\n"))
-        citing_list.append(StringIO("celex,citedD\nB,OUTBOUND_B\n"))
+    def _fake_execute(relations_list, citations):
+        relations_list.append(
+            StringIO(
+                "celex,citedD,direction\n"
+                "A,INBOUND_A,inbound\n"
+                "B,OUTBOUND_B,outbound\n"
+            )
+        )
 
     monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
 
@@ -51,9 +63,17 @@ def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch)
 def test_add_citations_separate_deduplicates_relations(monkeypatch):
     data = pd.DataFrame({"CELEX IDENTIFIER": ["A"]})
 
-    def _fake_execute(cited_list, citing_list, citations):
-        cited_list.append(StringIO("celex,citedD\nA,X\nA,X\nA,Y\n"))
-        citing_list.append(StringIO("celex,citedD\nA,Z\nA,Z\n"))
+    def _fake_execute(relations_list, citations):
+        relations_list.append(
+            StringIO(
+                "celex,citedD,direction\n"
+                "A,X,inbound\n"
+                "A,X,inbound\n"
+                "A,Y,inbound\n"
+                "A,Z,outbound\n"
+                "A,Z,outbound\n"
+            )
+        )
 
     monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
 
@@ -61,6 +81,30 @@ def test_add_citations_separate_deduplicates_relations(monkeypatch):
 
     assert data.loc[0, "cited_by"] == "X;Y"
     assert data.loc[0, "citing"] == "Z"
+
+
+def test_add_citations_separate_deduplicates_duplicate_input_celexes(monkeypatch):
+    data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "A", "B"]})
+    seen = []
+
+    def _fake_execute(relations_list, citations):
+        seen.append(list(citations))
+        relations_list.append(
+            StringIO(
+                "celex,citedD,direction\n"
+                "A,X,outbound\n"
+                "B,Y,inbound\n"
+            )
+        )
+
+    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+
+    citations_adder.add_citations_separate(data, threads=3)
+
+    assert sorted(tuple(batch) for batch in seen) in ([("A", "B")], [("A",), ("B",)])
+    assert data.loc[0, "citing"] == "X"
+    assert data.loc[1, "citing"] == "X"
+    assert data.loc[2, "cited_by"] == "Y"
 
 
 def test_add_citations_separate_webservice_warns_on_use(monkeypatch):

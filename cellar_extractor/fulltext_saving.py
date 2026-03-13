@@ -2,6 +2,7 @@ import json
 import threading
 import time
 import warnings
+import math
 import pandas as pd
 from cellar_extractor.eurlex_scraping import (
     get_case_data_by_celex_id,
@@ -19,6 +20,8 @@ from cellar_extractor.eurlex_scraping import (
 )
 from cellar_extractor.persistence import write_json
 from tqdm import tqdm
+
+MAX_FULLTEXT_WORKERS = 6
 
 
 def execute_sections_threads(
@@ -241,10 +244,8 @@ def add_sections(
         leave=True,
         maxinterval=10000,
     )
-    if length > threads:  # to avoid getting problems with small files
-        at_once_threads = int(length / threads)
-    else:
-        at_once_threads = length
+    worker_count = min(max(1, threads), MAX_FULLTEXT_WORKERS, length) if length else 1
+    at_once_threads = max(1, math.ceil(length / worker_count)) if length else 1
     threads = []
     list_sum = []
     list_key = []

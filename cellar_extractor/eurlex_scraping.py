@@ -1,10 +1,13 @@
 import io
+import random
 import time
 import re
+import threading
 from functools import lru_cache
 import requests
 import xmltodict
 from SPARQLWrapper import JSON, POST, SPARQLWrapper
+from requests.adapters import HTTPAdapter
 
 from bs4 import BeautifulSoup
 
@@ -21,6 +24,8 @@ INFOCURIA_BLOB_HTML = (
     + "/blob/download-file-html/{jurisdiction}/{year}/{process}/{file_name}"
 )
 CELLAR_SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
+HTTP_POOL_SIZE = 8
+INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
 
 LANG_AUTH_TO_SHORT = {
     "BUL": "BG",
@@ -81,6 +86,10 @@ celex_case_pattern = re.compile(r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\
 Method for detecting code-words for case law directory codes for cellar.
 """
 
+_thread_local = threading.local()
+_rate_limit_lock = threading.Lock()
+_last_request_at = {}
+
 
 def _normalize_celex(celex):
     if celex != celex:
@@ -93,6 +102,32 @@ def _normalize_celex(celex):
     if "_" in value:
         value = value.split("_")[0]
     return value
+
+
+def _sleep_with_backoff(attempt, base=0.2):
+    time.sleep(base * (attempt + 1) + random.uniform(0.0, 0.1))
+
+
+def _pace_requests(bucket, min_interval):
+    with _rate_limit_lock:
+        now = time.monotonic()
+        last = _last_request_at.get(bucket, 0.0)
+        wait = min_interval - (now - last)
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _last_request_at[bucket] = now
+
+
+def _get_http_session():
+    session = getattr(_thread_local, "http_session", None)
+    if session is None:
+        session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _thread_local.http_session = session
+    return session
 
 
 def _published_id_from_celex(celex):
@@ -110,14 +145,16 @@ def _published_id_from_celex(celex):
 
 def _post_json(url, payload, retries=3):
     last_error = None
-    for _ in range(retries):
+    session = _get_http_session()
+    for attempt in range(retries):
         try:
-            response = requests.post(url, json=payload, timeout=60)
+            _pace_requests("infocuria_post", INFOCURIA_MIN_INTERVAL_SECONDS)
+            response = session.post(url, json=payload, timeout=60)
             if response.status_code == 200:
                 return response.json()
         except Exception as exc:
             last_error = exc
-        time.sleep(0.3)
+        _sleep_with_backoff(attempt)
     if last_error:
         raise RuntimeError(f"POST request failed for {url}") from last_error
     return None
@@ -125,7 +162,7 @@ def _post_json(url, payload, retries=3):
 
 def _query_cellar_sparql(query, retries=3):
     last_error = None
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             sparql = SPARQLWrapper(CELLAR_SPARQL_ENDPOINT)
             sparql.setReturnFormat(JSON)
@@ -134,7 +171,7 @@ def _query_cellar_sparql(query, retries=3):
             return sparql.queryAndConvert()
         except Exception as exc:
             last_error = exc
-            time.sleep(0.3)
+            _sleep_with_backoff(attempt)
     if last_error:
         raise RuntimeError("SPARQL query failed for CELLAR endpoint") from last_error
     return None
@@ -191,8 +228,10 @@ def _parse_text_from_pdf(pdf_bytes):
 
 
 def _extract_item_payload(item_url, format_hint):
+    session = _get_http_session()
     try:
-        response = requests.get(item_url, timeout=60)
+        _pace_requests("cellar_item_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+        response = session.get(item_url, timeout=60)
     except Exception:
         return "", "", ""
     if response.status_code != 200:
@@ -595,7 +634,8 @@ def _get_case_data_sector6(celex, language="EN"):
         process=process,
         file_name=f"{logic_doc_id}-{doc_lang}-1.html",
     )
-    html_response = requests.get(blob_url, timeout=60)
+    _pace_requests("infocuria_blob_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+    html_response = _get_http_session().get(blob_url, timeout=60)
     html = html_response.text if html_response.status_code == 200 else ""
 
     keywords = ";".join(_extract_labels(root_content.get("matCodeML"), language="en"))
@@ -684,10 +724,11 @@ def response_wrapper(link, num=1):
     if num == 10:
         return "404"
     try:
-        response = requests.get(link, timeout=60)
+        _pace_requests("generic_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+        response = _get_http_session().get(link, timeout=60)
         return response
     except Exception:
-        time.sleep(0.5 * num)
+        _sleep_with_backoff(num, base=0.3)
         return response_wrapper(link, num + 1)
 
 
