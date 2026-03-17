@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellar-extractor"
 readme = {file = "README.md", content-type = "text/markdown"}
-version = "1.2.4"
+dynamic = ["version"]
 requires-python = ">= 3.9"
 description = "Library for extracting CELLAR case law data from EUR-Lex"
 authors = [
@@ -46,3 +46,7 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["cellar_extractor"]
 namespaces = false
+
+[tool.setuptools_scm]
+write_to = "cellar_extractor/_version.py"
+local_scheme = "no-local-version"
