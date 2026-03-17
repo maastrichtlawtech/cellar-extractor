@@ -1,49 +1,91 @@
+import pytest
+
 from cellar_extractor.cellar_sparql_queries import CellarSparqlQuery
 
 
-import pytest
+class _FakeSparql:
+    def __init__(self, payload):
+        self.payload = payload
+        self.query = ""
 
-# List of CELEX numbers
-celex = ["61963CO0111"]
+    def setQuery(self, query):
+        self.query = query
 
-
-@pytest.mark.parametrize("celex", celex)
-def test_get_endorsement(celex):
-    result = CellarSparqlQuery().get_endorsements(celex)
-    ground_truth = (
-        "\n\nON THOSE GROUNDS,  \n"
-        "UPON HEARING THE REPORT OF THE JUDGE-RAPPORTEUR;  \n"
-        "UPON HEARING THE PARTIES TO THE MAIN ACTION AND THE INTERVENER;  \n"
-        "UPON HEARING THE OPINION OF THE ADVOCATE-GENERAL;"
-    )
-    # Strip trailing whitespace
-    result = result.rstrip()
-    ground_truth = ground_truth.rstrip()
-    # Strip newlines
-    result = result.replace("\n", "")
-    ground_truth = ground_truth.replace("\n", "")
-    assert result == ground_truth
+    def queryAndConvert(self):
+        return self.payload
 
 
-# This test is currently failing and needs to be 
-# sorted out in the future.
-celex = ["61986CJ0062"]
-@pytest.mark.parametrize("celex", celex)
-def test_get_grounds(celex):
-    result = CellarSparqlQuery().get_grounds(celex)
-    # Read ground truth from file 61986CJ0062.ENG.txt
-    with open("61986CJ0062.ENG.txt", "r") as f:
-        ground_truth = f.read()
-    # Remove <p> tags from ground truth
-    ground_truth = str(ground_truth).replace("<p>", "").replace("</p>", "")
-    # Strip leading and trailing whitespace
-    result = result.strip()
-    ground_truth = ground_truth.strip()
-    # Strip newlines
-    result = result.replace("\n", "")
-    ground_truth = ground_truth.replace("\n", "")
-    assert result == ground_truth
+def test_get_grounds_strips_html_tags():
+    payload = {
+        "results": {
+            "bindings": [
+                {"value": {"value": "<p>Alpha</p><p>Beta</p>"}},
+            ]
+        }
+    }
+    query = CellarSparqlQuery()
+    query.sparql = _FakeSparql(payload)
 
-# Run the tests
-if __name__ == "__main__":
-    pytest.main(["-vv"])
+    result = query.get_grounds("61986CJ0062")
+
+    assert result == "AlphaBeta"
+
+
+def test_get_endorsements_empty_result_is_empty_string():
+    payload = {"results": {"bindings": []}}
+    query = CellarSparqlQuery()
+    query.sparql = _FakeSparql(payload)
+
+    result = query.get_endorsements("61963CO0111")
+
+    assert result == ""
+
+
+def test_get_citations_deduplicates_targets():
+    payload = {
+        "results": {
+            "bindings": [
+                {"name2": {"value": "62000CJ0001"}},
+                {"name2": {"value": "62000CJ0001"}},
+                {"name2": {"value": "62000CJ0002"}},
+            ]
+        }
+    }
+    query = CellarSparqlQuery()
+    query.sparql = _FakeSparql(payload)
+
+    result = query.get_citations("62000CJ0003")
+
+    assert set(result) == {"62000CJ0001", "62000CJ0002"}
+
+
+def test_get_citations_omits_reverse_branch_when_cited_depth_zero():
+    payload = {"results": {"bindings": []}}
+    query = CellarSparqlQuery()
+    fake = _FakeSparql(payload)
+    query.sparql = fake
+
+    query.get_citations("62000CJ0003", cites_depth=1, cited_depth=0)
+
+    assert "?doc cdm:work_cites_work{1,1} ?cited" in fake.query
+    assert "?cited cdm:work_cites_work" not in fake.query
+    assert "UNION" not in fake.query
+
+
+def test_get_citations_requires_positive_depth():
+    query = CellarSparqlQuery()
+
+    with pytest.raises(ValueError, match="greater than zero"):
+        query.get_citations("62000CJ0003", cites_depth=0, cited_depth=0)
+
+
+def test_get_grounds_query_no_longer_relies_on_eng_manifestation_uri():
+    payload = {"results": {"bindings": []}}
+    query = CellarSparqlQuery()
+    fake = _FakeSparql(payload)
+    query.sparql = fake
+
+    query.get_grounds("82010AT0127(51)")
+
+    assert "resource/celex/82010AT0127(51).ENG.txt" not in fake.query
+    assert 'cdm:resource_legal_id_celex "82010AT0127(51)"' in fake.query

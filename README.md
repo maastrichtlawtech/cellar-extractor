@@ -1,186 +1,395 @@
 # Cellar Extractor
 
+[![CI](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml/badge.svg)](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/ci.yml)
+![Coverage](https://img.shields.io/badge/coverage-50%25-yellow)
+
 A Python library for extracting CELLAR case law data from EUR-Lex.
 
-This library contains functions to get CELLAR case law data from the EUR-Lex SPARQL endpoint and scrape additional information from EUR-Lex websites.
+This library contains functions to get CELLAR case law data from the EUR-Lex SPARQL endpoint and enrich additional information from InfoCuria and CELLAR item sources.
 
 ## Version
 
-Python 3.9+
+Python `3.9+`
 
 ## Tests
 
-![Workflow Status](https://github.com/maastrichtlawtech/cellar-extractor/actions/workflows/github-actions.yml/badge.svg)
+- CI: the badge above tracks the default supported test workflow
+- Coverage: the badge above tracks the default local test suite coverage snapshot
 
 ## Contributors
 
 <table>
    <tr>
-      <td align="center"> <a href="https://github.com/pranavnbapat"> <img src="https://avatars.githubusercontent.com/u/7271334?v=4" width="100;" alt="pranavnbapat"/> <br />
-         <sub><b>Pranav Bapat</b></sub> </a> 
-      </td>
-      <td align="center"> <a href="https://github.com/Cloud956"> <img src="https://avatars.githubusercontent.com/u/24865274?v=4" width="100;" alt="Cloud956"/> <br /> <sub><b>Piotr Lewandowski</b></sub> </a> </td>
-      <td align="center"> <a href="https://github.com/shashankmc"> <img src="https://avatars.githubusercontent.com/u/3445114?v=4" width="100;" alt="shashankmc"/> <br /> <sub><b>shashankmc</b></sub> </a> </td>
-      <td align="center"> <a href="https://github.com/gijsvd"> <img src="https://avatars.githubusercontent.com/u/31765316?v=4" width="100;" alt="gijsvd"/> <br /> <sub><b>gijsvd</b></sub> </a> </td>
-      <td align="center"> <a href="https://github.com/venvis"> <img src="https://avatars.githubusercontent.com/venvis" width="100;" alt="venvis"/> <br /> <sub><b>venvis</b></sub> </a> </td>
+      <td align="center"><a href="https://github.com/pranavnbapat"><img src="https://avatars.githubusercontent.com/u/7271334?v=4" width="100;" alt="pranavnbapat"/><br /><sub><b>Pranav Bapat</b></sub></a></td>
+      <td align="center"><a href="https://github.com/Cloud956"><img src="https://avatars.githubusercontent.com/u/24865274?v=4" width="100;" alt="Cloud956"/><br /><sub><b>Piotr Lewandowski</b></sub></a></td>
+      <td align="center"><a href="https://github.com/shashankmc"><img src="https://avatars.githubusercontent.com/u/3445114?v=4" width="100;" alt="shashankmc"/><br /><sub><b>shashankmc</b></sub></a></td>
+      <td align="center"><a href="https://github.com/gijsvd"><img src="https://avatars.githubusercontent.com/u/31765316?v=4" width="100;" alt="gijsvd"/><br /><sub><b>gijsvd</b></sub></a></td>
+      <td align="center"><a href="https://github.com/venvis"><img src="https://avatars.githubusercontent.com/venvis" width="100;" alt="venvis"/><br /><sub><b>venvis</b></sub></a></td>
+      <td align="center"><a href="https://github.com/davidwickerhf"><img src="https://avatars.githubusercontent.com/davidwickerhf" width="100;" alt="davidwickerhf"/><br /><sub><b>davidwickerhf</b></sub></a></td>
    </tr>
 </table>
 
 ## How to install?
 
-``pip install cellar-extractor``
+```bash
+pip install cellar-extractor
+```
 
-## What are the functions?
+## What The Project Does
 
-1. ``get_cellar``  
-    Gets all the ECLI data from the eurlex sparql endpoint and saves them in the CSV or JSON format, in-memory or as a saved file.
-2. ``get_cellar_extra``  
-    Gets all the ECLI data from the eurlex sparql endpoint, and on top of that scrapes the eurlex websites to acquire 
-    the full text, keywords, case law directory code and eurovoc identifiers. If the user does have an eurlex account with access to the eurlex webservices, he can also 
-    pass his webservices login credentials to the method, in order to extract data about works citing work and works 
-    being cited by work. The full text is returned as a JSON file, rest of data as a CSV.  Can be in-memory or as saved files.
-3. ``get_nodes_and_edges_lists``  
-    Gets 2 list objects, one for the nodes and edges of the citations within the passed dataframe.
-    Allows the creation of a network graph of the citations. Can only be returned in-memory.
-4. ``filter_subject_matter``  
-    Returns a dataframe of cases only containing a certain phrase in the column containing the subject of cases.
+`cellar-extractor` builds enriched EUR-Lex / CELLAR case-law datasets.
 
-## What are the classes?
+It starts from CELLAR metadata and then enriches:
 
-1. ``FetchOperativePart``  
-    A class whose instance(declaration) when called returns a list of the all the text contained within the operative part for each European Court of Justice (CJEU, formerly known as European Court of Justice (ECJ)) judgement (English only).  The ``FetchOperativePart`` class has eleven functions - each function scrapes for the operative part depending on the html structure of the page :
-    - ``html_page_structure_one`` -  This function retreives operative part from documents of the respected celex id's. This function scrapes/parse the operative part from a nested table structure . The relevant text lies inside the coj-bold class of the span tag.
-    - ``html_page_structure_two`` - This function retreives operative part from documents of the respected celex id's. This function scrapes/parse the operative part from a paragraph (p) structure. The relevant text lies inside the normal class of the p tag which comes after the keyword operative of the previous span tag.
-    - ``structure_three`` - This function retreives operative part from documents of the respected celex id's. This function scrapes/parse the operative part from a nested table structure. The relevant text lies inside the coj-bold class of the span tag.
-    - `structure_four` - This function retrieves the operative part from documents of the respected celex ids. This function scrapes/parses the operative part from a paragraph (p) structure. The relevant text lies inside the p tag which comes after the keyword operative of the previous span tag.
-    - `structure_five` - This function retrieves the operative part from documents of the respected celex ids. This function scrapes/parses the operative part from a paragraph (p) structure. The relevant text lies inside the normal class of the p tag which comes after the keyword operative of the previous span tag.
-    - `structure_six` - This function retrieves the operative part from documents of the respected celex ids. This function scrapes/parses the operative part from a h2 (header) structure. The relevant text lies inside the p tag which comes after the keyword operative part of the respective h2 tag.
-    - `structure_seven` - This function retrieves the operative part from documents of the respected celex ids. This function scrapes/parses the operative part from a table (table) structure. The relevant text lies inside the span tag which comes after the p tag, with the class name=normal. 
-    - `structure_eight` - This function retrieves the operative part from documents of the respected celex ids. The text is extracted from the span tag nested inside the tbody tag. Returns a list as output.
-    - `structure_nine` - This function retrieves the operative part from documents of the respected celex ids. The operative part is under the bold (b) tag after the p tag where the keywords "on those grounds" exist.
-    - `structure_ten` - This function retrieves the operative part from documents of the respected celex ids. Since the content is preloaded using js/client server side functions, the text from the current page is retrieved and the operative part is scraped after the occurrence of the phrase "On those grounds".
-    - `structure_eleven` - This function retrieves the operative part from documents of the respected celex ids. The operative part is under the paragraph (p) tag after the b tag where the keywords "operative part" exist.
+- citation edges
+- summaries and keywords
+- full text
+- sector-specific metadata
+- graph-ready node/edge projections
 
-2. ``Writing``  
-A class which writes the text for the operative part for each European Case law case(En-English only) into csv,json and txt files(Generated upon initialization). The ``Writing`` class has three functions:
-    - ``to_csv()`` - Writes the operative part along with celex id into a csv file.
-    - ``to_json()`` - Writes the operative part along with celex id into a json file.
-    - ``to_txt()`` - Writes the operative part along with celex id into a txt file
-   
-3. ``CellarSparqlQuery``
-A class which includes methods to extract extra data for each court case using a sparql query.
-      - ``get_endorsements`` - Fetches endorsements of the judgement
-      - ``get_subjects`` - Fetches subjects of the judgement
-      - ``get_parties`` - Fetches parties of the judgement
-      - ``get_keywords`` - Fetches keywords of the judgement
-      - ``get_citations`` - Fetches court cases cited by the source judgement
-      - ``get_grounds`` - Fetches grounds of the judgement
+The extractor is currently centered on:
 
-## What are the parameters?
+- **sector 6** case law: CJEU-style material via InfoCuria
+- **sector 8** case law: mixed / national-case-law material via CELLAR RDF + item downloads
 
-1. ``get_cellar``  
-    **Parameters**:
-    - **max_ecli**: **int, optional, default 100**  
-    Maximum number of ECLIs to retrieve.
-    - **sd: date, optional, default '2022-05-01'**  
-    The start last modification date (yyyy-mm-dd).
-    - **ed: date, optional, default current date**  
-    The end last modification date (yyyy-mm-dd).
-    - **save_file: ['y', 'n'],optional, default 'y'**  
-    Save data in a data folder, or return in-memory.
-    - **file_format: ['csv', 'json'],optional, default 'csv'**  
-    Returns the data as a JSON/dictionary, or as a CSV/Pandas Dataframe object.
+The main workflow has two stages.
 
-2. ``get_cellar_extra``
-    - **max_ecli: int, optional, default 100**  
-    Maximum number of ECLIs to retrieve.
-    - **sd: date, optional, default '2022-05-01'**  
-    The start last modification date (yyyy-mm-dd).
-    - **ed: date, optional, default current date**  
-    The end last modification date (yyyy-mm-dd).
-    - **save_file: ['y', 'n'],optional, default 'y'**  
-    Save the full text of cases as JSON file / return as a dictionary and save the rest ofthe data as a CSV file / return as a Pandas Dataframe object.
-    - **threads: int ,optional, default 10**  
-    Extracting the additional data takes a lot of time. The use of multi-threading can cut down this time. Even with this, the method may take a couple of minutes for a couple of hundred cases. A maximum number of 10 recommended, as this method may also affect the device's internet connection.
-    - **username: string, optional, default empty string**  
-    The username to the eurlex webservices.
-    - **password: string, optional, default empty string**  
-    The password to the eurlex webservices.
+1. `get_cellar(...)`
+   - fetches the base CELLAR corpus
+   - returns CSV-like dataframe output or JSON-like dictionary output
+2. `get_cellar_extra(...)`
+   - enriches that corpus with citations, full text, summaries, keywords, provenance, and missing-data flags
 
-3. ``get_nodes_and_edges_lists``
-    - **df: DataFrame object, required, default None**  
-    DataFrame of cellar metadata acquired from the ``get_cellar_extra`` method with eurlex webservice credentials passed. This method will only work on dataframes with citations data.
-    - **only_local: boolean, optional, default False**  
-    Flag for nodes and edges generation. If set to True, the network created will only include nodes and edges between
-    cases exclusively inside the given dataframe.
+The citation graph is now extracted through the public CELLAR SPARQL endpoint. Legacy EUR-Lex SOAP webservice support is kept only for validation tests and is not part of the production path anymore.
 
-4. ``filter_subject_matter``
-    - **df: DataFrame object, required, default None**  
-    DataFrame of cellar metadata acquired from any of the cellar extraction methods listed above.
-    - **phrase: string, required, default None**  
-    The phrase which has to be present in the subject matter of cases. Case insensitive.
+## Data Sources By Type
 
-5. ``Analyzer``
-    - **celex id: str, required**
-        - Pass as a constructor upon initializing the class
+| Need | Source |
+| --- | --- |
+| Base corpus metadata | CELLAR SPARQL |
+| Citation edges (`citing`, `cited_by`) | CELLAR SPARQL |
+| Sector 6 full text and structured metadata | InfoCuria |
+| Sector 8 full text and summaries | CELLAR RDF + downloadable `item` manifestations |
+| Legacy citation comparison only | EUR-Lex SOAP webservice |
 
-6. ``Writing``
-    - **celex id: str, required**
-        - Pass as a constructor upon initializing the class
+## Quick Start
 
-## Examples
+### 1. Fetch Base CELLAR Metadata
 
 ```python
 import cellar_extractor as cell
 
-# Below are examples for in-file saving:
-
-cell.get_cellar(save_file='y', max_ecli=200, sd='2022-01-01', file_format='csv')
-cell.get_cellar_extra(max_ecli=100, sd='2022-01-01', threads=10)
-
-# Below are examples for in-memory saving:
-
-df = cell.get_cellar(save_file='n', file_format='csv', sd='2022-01-01', max_ecli=1000)
-df,json = cell.get_cellar_extra(save_file='n', max_ecli=100, sd='2022-01-01', threads=10)
+df = cell.get_cellar(
+    save=False,
+    file_format="csv",
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    max_ecli=100,
+)
 ```
 
-Create a callback of the instance of the class initiated and pass a list as it's value.
+Returns a dataframe with base metadata such as CELEX, ECLI, type, dates, and subject-matter-related fields.
+
+You can also save explicitly to a custom path instead of the default `data/` location:
+
+```python
+cell.get_cellar(
+    save=True,
+    file_format="csv",
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    output_path="exports/cellar_january.csv",
+)
+```
+
+### 2. Fetch The Enriched Dataset
 
 ```python
 import cellar_extractor as cell
-instance=cell.FetchOperativePart(celex_id:str)
-output_list=instance()
-print(output_list) # prints operative part of the Case as a list
+
+extra_df, fulltext = cell.get_cellar_extra(
+    save=False,
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    max_ecli=100,
+    threads=4,
+)
 ```
 
-The Writing Class also takes a celex id , upon initializing the class , through the means of the constructor and writes the content of its operative part into different files, depending on the function called.
+Returns:
+
+- `extra_df`: enriched dataframe
+- `fulltext`: list of JSON rows containing extracted text and provenance
+
+You can independently control where the enriched CSV and fulltext JSON are written:
+
+```python
+cell.get_cellar_extra(
+    save=True,
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    metadata_output_path="exports/cellar_extra.csv",
+    fulltext_output_path="exports/cellar_fulltext.json",
+    threads=4,
+)
+```
+
+### 3. Build A Citation Graph
 
 ```python
 import cellar_extractor as cell
-instance=cell.Writing(celex_id:str)
-output=instance.to_csv() # for csv
-output=instance.to_txt() # for txt
-output=instance.to_json() # for json
+
+nodes, edges = cell.get_nodes_and_edges_lists(extra_df, only_local=True)
 ```
+
+`only_local=True` keeps only edges whose target CELEX is also present in `extra_df`.
+
+### 4. Filter By Subject Matter
+
+```python
+filtered = cell.filter_subject_matter(extra_df, "competition")
+```
+
+## Full-Scrape Strategy
+
+If you want the largest reproducible scrape, do not run one enormous date range blindly. Use bounded windows and persist each window.
+
+Recommended approach:
+
+1. choose a date window by `sd` / `ed`
+2. run `get_cellar(...)` or `get_cellar_extra(...)`
+3. save outputs to disk
+4. repeat for the next window
+5. concatenate downstream
+
+Practical guidance:
+
+- use month-sized or week-sized windows for stability
+- keep `threads` moderate, typically `4` to `10`
+- use `save=True` for long runs
+- keep the fulltext JSON files; they are the canonical extracted text output
+
+Example file-based run:
+
+```python
+import cellar_extractor as cell
+
+cell.get_cellar_extra(
+    save=True,
+    sd="2025-01-01",
+    ed="2025-01-31T23:59:59",
+    max_ecli=5000,
+    threads=6,
+)
+```
+
+By default this writes into `data/`:
+
+- a CSV with the enriched tabular dataset
+- a `_fulltext.json` file with the text rows
+
+## Main Outputs
+
+`get_cellar_extra(...)` produces:
+
+1. an enriched dataframe / CSV
+2. a fulltext JSON list / file
+
+### Important Enriched DataFrame Columns
+
+- `citing`
+- `cited_by`
+- `celex_summary`
+- `celex_keywords`
+- `celex_directory_codes`
+- `celex_eurovoc`
+- `advocate_general`
+- `judge_rapporteur`
+- `affecting_ids`
+- `affecting_strings`
+- `citations_extra_info`
+- `fulltext_source`
+- `summary_source`
+- `missing_reasons`
+
+### Important Fulltext JSON Fields
+
+- `celex`
+- `ecli`
+- `text`
+- `text_source`
+- `text_language`
+- `text_format`
+- `missing_reasons`
+
+## Completeness Rules
+
+The extractor does not treat empty values as silent success.
+
+Important cases:
+
+- if citation data exists, it should populate `citing` / `cited_by`
+- if a document has no citation edges, the columns still exist and are empty
+- if full text or summary is not available upstream, `missing_reasons` should reflect that
+
+Typical `missing_reasons` values:
+
+- `FULLTEXT_UNAVAILABLE_UPSTREAM`
+- `SUMMARY_UNAVAILABLE_UPSTREAM`
+- `UNAVAILABLE_UPSTREAM`
+
+Sector 8 is still **best effort** because upstream availability is uneven, but the extractor now flags absence explicitly instead of implying completeness.
+
+## Public API Reference
+
+### Root-Level Package API
+
+Imported from [`cellar_extractor/__init__.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/__init__.py):
+
+| Function / class | Purpose |
+| --- | --- |
+| `get_cellar(...)` | Fetch base CELLAR metadata |
+| `get_cellar_extra(...)` | Fetch enriched metadata + full text |
+| `get_nodes_and_edges_lists(df, only_local=False)` | Build citation graph lists |
+| `filter_subject_matter(df, phrase)` | Filter dataframe by subject phrase |
+| `FetchOperativePart` | Extract operative part from a single case document |
+| `Writing` | Write operative-part outputs to CSV / JSON / TXT |
+
+### Core Modules
+
+#### [`cellar_extractor/cellar.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/cellar.py)
+
+- `get_cellar(ed=None, save_file=<deprecated>, max_ecli=100, sd="2022-05-01", file_format="csv", output_dir="data", output_path=None, return_data=None, save=None)`
+- `get_cellar_extra(ed=None, save_file=<deprecated>, max_ecli=100, sd="2022-05-01", threads=10, username="", password="", output_dir="data", metadata_output_path=None, fulltext_output_path=None, save_metadata=None, save_fulltext=None, return_data=None, save=None)`
+- `get_nodes_and_edges_lists(df=None, only_local=False)`
+- `filter_subject_matter(df=None, phrase=None)`
+
+Notes:
+
+- `username` / `password` are legacy compatibility parameters and no longer change the extraction path
+- `save` is the preferred save toggle; `save_file` is kept as a deprecated compatibility alias
+- `output_path`, `metadata_output_path`, and `fulltext_output_path` let callers choose exact output locations instead of relying on fixed folders
+- when save flags are disabled, the package returns in-memory objects without writing files
+
+#### [`cellar_extractor/citations_adder.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/citations_adder.py)
+
+- `add_citations_separate(data, threads)`: production citation enrichment
+- `add_citations_separate_webservice(data, username, password)`: deprecated legacy comparison path
+- `add_citations(data, threads)`: older citation replacement helper
+
+#### [`cellar_extractor/fulltext_saving.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/fulltext_saving.py)
+
+- `add_sections(data, threads, output_path=None, json_filepath=None, fulltext_output_path=None)`: enriches summaries, keywords, text metadata, provenance, and missing-data flags
+
+#### [`cellar_extractor/eurlex_scraping.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/eurlex_scraping.py)
+
+Main higher-level adapter functions:
+
+- `get_case_data_by_celex_id(celex, language="EN")`
+- `get_html_text_by_celex_id(id)`
+- `get_summary_html(celex)`
+- `get_full_text_from_html(html_text)`
+
+This module contains the sector-aware source logic for InfoCuria and CELLAR item retrieval.
+
+#### [`cellar_extractor/sparql.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/sparql.py)
+
+- `get_citations(source_celex, cites_depth=1, cited_depth=1, max_retries=3)`
+- `get_citations_csv(celex, max_retries=3)`
+- `get_citing(celex, cites_depth, max_retries=3)`
+- `get_cited(celex, cited_depth, max_retries=3)`
+- `run_eurlex_webservice_query(query_input, username, password)` for legacy SOAP validation only
+
+#### [`cellar_extractor/cellar_sparql_queries.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/cellar_sparql_queries.py)
+
+Advanced query helper class:
+
+- `CellarSparqlQuery`
+  - `get_endorsements()`
+  - `get_subjects()`
+  - `get_parties()`
+  - `get_keywords()`
+  - `get_citations()`
+  - `get_grounds()`
+
+#### [`cellar_extractor/operative_extractions.py`](/Users/davidwickerhf/Projects/work/maastricht/cellar-extractor/cellar_extractor/operative_extractions.py)
+
+Classes:
+
+- `FetchOperativePart`
+- `Writing`
+
+Use this path when you want operative-part extraction for individual documents rather than the full dataset pipeline.
+
+## Upstream Endpoints Used
+
+These are the upstream systems the extractor relies on.
+
+| Endpoint family | Used for |
+| --- | --- |
+| CELLAR SPARQL `https://publications.europa.eu/webapi/rdf/sparql` | corpus discovery, metadata, citation edges |
+| InfoCuria `https://infocuriaws.curia.europa.eu/...` | sector 6 text and metadata |
+| InfoCuria `https://infocuria.curia.europa.eu/document/...` | sector 6 document HTML |
+| CELLAR resource/item URLs under `https://publications.europa.eu/resource/cellar/...` | sector 8 downloadable text / summary manifestations |
+| EUR-Lex SOAP `https://eur-lex.europa.eu/EURLexWebService?wsdl` | legacy redundancy tests only |
+
+## Testing
+
+### Fast Local Suite
+
+```bash
+pytest -q
+```
+
+### Live Integration Flags
+
+- `RUN_INFOCURIA_INTEGRATION=1`
+- `RUN_SECTOR8_INTEGRATION=1`
+- `RUN_CITATION_INTEGRATION=1`
+
+Examples:
+
+```bash
+RUN_INFOCURIA_INTEGRATION=1 pytest -q tests/test_infocuria_integration.py
+RUN_SECTOR8_INTEGRATION=1 pytest -q tests/test_sector8_integration.py
+RUN_CITATION_INTEGRATION=1 pytest -q tests/test_citation_graph_integration.py
+```
+
+### Legacy Webservice Tests
+
+Only needed if you want to re-check SOAP redundancy:
+
+```bash
+RUN_WEBSERVICE_INTEGRATION=1 pytest -q tests/test_webservice_credentials_integration.py tests/test_webservice_redundancy_integration.py
+```
+
+If used, credentials are read from `.env`:
+
+```env
+EURLEX_WEBSERVICE_USERNAME=
+EURLEX_WEBSERVICE_PASSWORD=
+```
+
+These credentials are **not required** for normal extraction.
+
+## Troubleshooting
+
+### `missing_reasons` is populated
+
+That means the extractor could not find the requested upstream content. This is expected when upstream does not expose a summary or full text for the document.
+
+### Citation columns are empty
+
+Check:
+
+- that the document actually has graph relations upstream
+- the live SPARQL endpoint availability
+- whether you are looking at a very small or isolated sample
+
+### Sector 8 feels sparse
+
+That is usually an upstream availability issue, not a silent extractor failure. Sector 8 is intentionally handled as best effort with explicit flags.
 
 ## License
-[![License: Apache 2.0](https://img.shields.io/github/license/maastrichtlawtech/extraction_libraries)](https://opensource.org/licenses/Apache-2.0)
 
-Previously under the [MIT License](https://opensource.org/licenses/MIT), as of 28/10/2022 this work is licensed under a [Apache License, Version 2.0](https://opensource.org/licenses/Apache-2.0).
-```
-Apache License, Version 2.0
-
-Copyright (c) 2022 Maastricht Law & Tech Lab
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-    
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+[Apache License 2.0](https://opensource.org/licenses/Apache-2.0)

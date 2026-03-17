@@ -1,30 +1,34 @@
+from datetime import date, datetime, timedelta
+
 from SPARQLWrapper import SPARQLWrapper, JSON, POST
 
+DEFAULT_ECLI_START_DATE = "1954-01-01"
+MAX_SORTED_TOP_LIMIT = 10000
+ECLI_WINDOW_DAYS = 366
 
-def get_all_eclis(starting_date=None, ending_date=None):
-    """Gets a list of all ECLIs in CELLAR. If this needs to be picked up
-    from a previous run,
-    the last ECLI parsed in that run can be used as starting point for this run
 
-    :param starting_date: Document modification date to start off from.
-        Can be set to last run to only get updated documents.
-        Ex. 2020-03-19T09:41:10.351+01:00
-    :type starting_date: str, optional
-    :param ending_date: Document modification date to end at.
-    :type ending_date : str,optional
-    :return:  A list of all (filtered) ECLIs in CELLAR.
-    :rtype: list[str]
-    """
+def _query_with_retries(sparql, retries, error_message):
+    last_error = None
+    for _ in range(retries):
+        try:
+            return sparql.queryAndConvert()
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(error_message) from last_error
 
-    # This query essentially gets all things from cellar that have an ECLI.
-    # It then sorts that list, and if necessary filters it based on an
-    # ECLI to start off from.
-    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
-    sparql = SPARQLWrapper(endpoint)
-    sparql.setReturnFormat(JSON)
 
-    sparql.setQuery(
-        """
+def _coerce_date(value, fallback):
+    if value is None:
+        value = fallback
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return datetime.fromisoformat(str(value)[:10]).date()
+
+
+def _build_ecli_query(starting_date=None, ending_date=None, limit=None):
+    return """
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         select
         distinct ?ecli
@@ -35,26 +39,119 @@ def get_all_eclis(starting_date=None, ending_date=None):
             %s
         }
         order by asc(?ecli)
-    """
-        % (
-            "http://publications.europa.eu/ontology/cdm#work_date_document",
-            f'FILTER(STR(?date) >= "{starting_date}")' if starting_date else "",
-            f'FILTER(STR(?date) <= "{ending_date}")' if ending_date else "",
-        )
+        %s
+    """ % (
+        "http://publications.europa.eu/ontology/cdm#work_date_document",
+        f'FILTER(STR(?date) >= "{starting_date}")' if starting_date else "",
+        f'FILTER(STR(?date) <= "{ending_date}")' if ending_date else "",
+        f"LIMIT {limit}" if limit else "",
     )
-    ret = sparql.queryAndConvert()
 
+
+def _extract_eclis(ret):
     eclis = []
-
-    # Extract the actual results
     for res in ret["results"]["bindings"]:
         eclis.append(res["ecli"]["value"])
+    return eclis
 
+
+def _query_ecli_window(starting_date=None, ending_date=None, limit=None, max_retries=3):
+    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
+    sparql = SPARQLWrapper(endpoint)
+    sparql.setReturnFormat(JSON)
+    sparql.setQuery(
+        _build_ecli_query(
+            starting_date=starting_date, ending_date=ending_date, limit=limit
+        )
+    )
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to query CELLAR ECLI list after retries",
+    )
+    return _extract_eclis(ret)
+
+
+def _build_ecli_windows(starting_date=None, ending_date=None, window_days=None):
+    if window_days is None:
+        window_days = ECLI_WINDOW_DAYS
+    start_raw = starting_date or DEFAULT_ECLI_START_DATE
+    end_raw = ending_date or datetime.now().date().isoformat()
+
+    start_date = _coerce_date(start_raw, DEFAULT_ECLI_START_DATE)
+    end_date = _coerce_date(end_raw, datetime.now().date().isoformat())
+    if start_date > end_date:
+        raise ValueError("starting_date must be earlier than or equal to ending_date")
+
+    windows = []
+    current = start_date
+    while current <= end_date:
+        current_end = min(current + timedelta(days=window_days - 1), end_date)
+        window_start = start_raw if current == start_date else current.isoformat()
+        window_end = end_raw if current_end == end_date else current_end.isoformat()
+        windows.append((window_start, window_end))
+        current = current_end + timedelta(days=1)
+    return windows
+
+
+def get_all_eclis(starting_date=None, ending_date=None, limit=None, max_retries=3):
+    """Gets a list of all ECLIs in CELLAR. If this needs to be picked up
+    from a previous run,
+    the last ECLI parsed in that run can be used as starting point for this run
+
+    :param starting_date: Document modification date to start off from.
+        Can be set to last run to only get updated documents.
+        Ex. 2020-03-19T09:41:10.351+01:00
+    :type starting_date: str, optional
+    :param ending_date: Document modification date to end at.
+    :type ending_date : str,optional
+    :param limit: Maximum number of ECLIs to return from the endpoint.
+    :type limit: int, optional
+    :return:  A list of all (filtered) ECLIs in CELLAR.
+    :rtype: list[str]
+    """
+
+    # Small requests can safely stay as a single endpoint-side sorted query.
+    if limit and limit <= MAX_SORTED_TOP_LIMIT:
+        return _query_ecli_window(
+            starting_date=starting_date,
+            ending_date=ending_date,
+            limit=limit,
+            max_retries=max_retries,
+        )
+
+    collected = set()
+    for window_start, window_end in _build_ecli_windows(
+        starting_date=starting_date, ending_date=ending_date
+    ):
+        remaining = None if limit is None else limit - len(collected)
+        if remaining is not None and remaining <= 0:
+            break
+
+        window_limit = (
+            remaining if remaining and remaining <= MAX_SORTED_TOP_LIMIT else None
+        )
+        collected.update(
+            _query_ecli_window(
+                starting_date=window_start,
+                ending_date=window_end,
+                limit=window_limit,
+                max_retries=max_retries,
+            )
+        )
+
+    eclis = sorted(collected)
+    if limit is not None:
+        return eclis[:limit]
     return eclis
 
 
 def get_raw_cellar_metadata(
-    eclis, get_labels=True, force_readable_cols=True, force_readable_vals=False
+    eclis,
+    get_labels=True,
+    force_readable_cols=True,
+    force_readable_vals=False,
+    max_retries=3,
 ):
     """Gets cellar metadata
 
@@ -106,12 +203,11 @@ def get_raw_cellar_metadata(
     sparql.setReturnFormat(JSON)
     sparql.setMethod(POST)
     sparql.setQuery(query)
-    try:
-        ret = sparql.queryAndConvert()
-    except Exception:
-        return get_raw_cellar_metadata(
-            eclis, get_labels, force_readable_cols, force_readable_vals
-        )
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to query CELLAR metadata after retries",
+    )
     # Create one dict for each document
     metadata = {}
     for ecli in eclis:
