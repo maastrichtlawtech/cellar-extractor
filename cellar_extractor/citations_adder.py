@@ -324,9 +324,7 @@ def add_citations_separate(data, threads):
 
     celex = data.loc[:, "CELEX IDENTIFIER"]
     unique_celex = [
-        value
-        for value in pd.unique(celex.fillna("").astype(str))
-        if value.strip() != ""
+        value for value in pd.unique(celex.fillna("").astype(str)) if value.strip() != ""
     ]
     length = len(unique_celex)
     if length == 0:
