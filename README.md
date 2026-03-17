@@ -333,7 +333,7 @@ These are the upstream systems the extractor relies on.
 | CELLAR resource/item URLs under `https://publications.europa.eu/resource/cellar/...` | sector 8 downloadable text / summary manifestations |
 | EUR-Lex SOAP `https://eur-lex.europa.eu/EURLexWebService?wsdl` | legacy redundancy tests only |
 
-## Tests
+## Testing
 
 ### Fast Local Suite
 
