@@ -1,12 +1,15 @@
 import sys
+import math
 import threading
 import time
 import logging
+import warnings
 from io import StringIO
 from os.path import dirname, abspath
 import pandas as pd
 from cellar_extractor.sparql import (
     get_citations_csv,
+    get_citation_relations_csv,
     get_cited,
     get_citing,
     run_eurlex_webservice_query,
@@ -15,6 +18,36 @@ from cellar_extractor.eurlex_scraping import extract_dictionary_from_webservice_
 from tqdm import tqdm
 
 sys.path.append(dirname(dirname(dirname(dirname(abspath(__file__))))))
+
+MAX_CITATION_WORKERS = 3
+
+
+def _deduplicate_preserving_order(values):
+    ordered = []
+    seen = set()
+    for value in values:
+        item = str(value).strip()
+        if item == "" or item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ";".join(ordered)
+
+
+def _replace_or_insert_column(df, column_title, column):
+    if column_title in df.columns:
+        df.drop(columns=[column_title], inplace=True)
+    df.insert(1, column_title, column)
+
+
+def _group_relations(frame):
+    if frame.empty:
+        return {}
+
+    grouped = {}
+    for celex, values in frame.groupby("celex", sort=False)["citedD"]:
+        grouped[celex] = _deduplicate_preserving_order(values.tolist())
+    return grouped
 
 
 def execute_citations(csv_list, citations):
@@ -69,12 +102,13 @@ def add_citations(data, threads):
         cited = df[df["celex"] == celex].loc[:, "citedD"]
         string = ";".join(cited)
         citations[index[0]] = string
-    data.pop(name)
+    if name in data.columns:
+        data.pop(name)
     citations.sort_index(inplace=True)
     data.insert(1, name, citations)
 
 
-def execute_citations_separate(cited_list, citing_list, citations):
+def execute_citations_separate(relations_list, citations):
     """
     Method used by separate threads for the multi-threading method of
     adding citations to the dataframe. Sends a query which returns a csv
@@ -84,10 +118,8 @@ def execute_citations_separate(cited_list, citing_list, citations):
     """
     at_once = 1000
     for i in range(0, len(citations), at_once):
-        new_cited = get_cited(citations[i : (i + at_once)], 1)
-        new_citing = get_citing(citations[i : (i + at_once)], 1)
-        cited_list.append(StringIO(new_cited))
-        citing_list.append(StringIO(new_citing))
+        new_relations = get_citation_relations_csv(citations[i : (i + at_once)], 1, 1)
+        relations_list.append(StringIO(new_relations))
 
 
 def execute_citations_webservice(dictionary_list, celexes, username, password):
@@ -184,10 +216,9 @@ def allowed_id(id):
     as it will also include treaties and other documents,
     which are not being extracted by the cellar extractor.
     """
-    if id != "":
-        return id[0] == 8 or id[0] == 6
-    else:
+    if id == "":
         return False
+    return id[0] in {"6", "8"}
 
 
 def reverse_citing_dict(citing):
@@ -213,11 +244,14 @@ def add_dictionary_to_df(df, dictionary, column_title):
     column = pd.Series([], dtype="string")
     celex = df.loc[:, "CELEX IDENTIFIER"]
     for k in dictionary:
-        if celex.str.contains(k).any():
-            index = df.index[df["CELEX IDENTIFIER"].str.contains(k, na=False)].tolist()
+        matches = celex.fillna("").apply(
+            lambda value, k=k: k in [part.strip() for part in str(value).split(";")]
+        )
+        if matches.any():
+            index = df.index[matches].tolist()
             column[index[0]] = dictionary.get(k)
     column.sort_index(inplace=True)
-    df.insert(1, column_title, column)
+    _replace_or_insert_column(df, column_title, column)
 
 
 def add_citations_separate_webservice(data, username, password):
@@ -226,6 +260,13 @@ def add_citations_separate_webservice(data, username, password):
     Old column -> links to cited works
     New columns -> celex identifiers of cited works and works citing current work
     """
+    warnings.warn(
+        "add_citations_separate_webservice is deprecated. "
+        "Use add_citations_separate instead; SPARQL now provides the authoritative "
+        "citation graph used by the extractor.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     celex = data.loc[:, "CELEX IDENTIFIER"]
     query = " SELECT CI, DN WHERE DN = 62019CJ0668"
     response = run_eurlex_webservice_query(query, username, password)
@@ -282,19 +323,24 @@ def add_citations_separate(data, threads):
     """
 
     celex = data.loc[:, "CELEX IDENTIFIER"]
-    length = celex.size
-    if length > 100:  # to avoid getting problems with small files
-        at_once_threads = int(length / threads)
-    else:
-        at_once_threads = length
-    cited_csv = list()
-    citing_csv = list()
+    unique_celex = [
+        value for value in pd.unique(celex.fillna("").astype(str)) if value.strip() != ""
+    ]
+    length = len(unique_celex)
+    if length == 0:
+        _replace_or_insert_column(data, "citing", pd.Series([], dtype="string"))
+        _replace_or_insert_column(data, "cited_by", pd.Series([], dtype="string"))
+        return
+
+    worker_count = min(max(1, threads), MAX_CITATION_WORKERS, length)
+    chunk_size = max(1, math.ceil(length / worker_count))
+    relations_csv = list()
     threads = []
 
-    for i in range(0, length, at_once_threads):
-        curr_celex = celex[i : (i + at_once_threads)]
+    for i in range(0, length, chunk_size):
+        curr_celex = unique_celex[i : (i + chunk_size)]
         t = threading.Thread(
-            target=execute_citations_separate, args=(cited_csv, citing_csv, curr_celex)
+            target=execute_citations_separate, args=(relations_csv, curr_celex)
         )
         threads.append(t)
 
@@ -304,30 +350,29 @@ def add_citations_separate(data, threads):
     for t in threads:
         t.join()
 
-    cited = pd.concat(map(pd.read_csv, cited_csv), ignore_index=True)
-    citing = pd.concat(map(pd.read_csv, citing_csv), ignore_index=True)
+    if len(relations_csv) == 0:
+        relations = pd.DataFrame(columns=["celex", "citedD", "direction"])
+    else:
+        relations = pd.concat(map(pd.read_csv, relations_csv), ignore_index=True)
+        if "direction" not in relations.columns:
+            relations["direction"] = ""
 
-    celexes = pd.unique(cited.loc[:, "celex"])
+    cited = relations[relations["direction"] == "inbound"].loc[:, ["celex", "citedD"]]
+    citing = relations[relations["direction"] == "outbound"].loc[:, ["celex", "citedD"]]
+    cited_map = _group_relations(cited)
+    citing_map = _group_relations(citing)
 
     citing_df = pd.Series([], dtype="string")
     cited_df = pd.Series([], dtype="string")
-    for cel in celexes:
-        index = data[data["CELEX IDENTIFIER"] == cel].index.values
-
-        cited_data = cited[cited["celex"] == celex].loc[:, "citedD"]
-        citing_data = citing[citing["celex"] == celex].loc[:, "citedD"]
-
-        string_cited = ";".join(cited_data)
-        string_citing = ";".join(citing_data)
-
-        citing_df[index[0]] = string_citing
-        cited_df[index[0]] = string_cited
+    for index, cel in data.loc[:, "CELEX IDENTIFIER"].items():
+        cited_df[index] = cited_map.get(cel, "")
+        citing_df[index] = citing_map.get(cel, "")
 
     citing_df.sort_index(inplace=True)
     cited_df.sort_index(inplace=True)
 
-    data.insert(1, "citing", citing_df)
-    data.insert(1, "cited_by", cited_df)
+    _replace_or_insert_column(data, "citing", citing_df)
+    _replace_or_insert_column(data, "cited_by", cited_df)
 
 
 if __name__ == "__main__":

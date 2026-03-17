@@ -5,4 +5,4 @@ beautifulsoup4
 tqdm
 SPARQLWrapper
 pandas
-
+pypdf

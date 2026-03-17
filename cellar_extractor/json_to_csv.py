@@ -7,6 +7,8 @@ from io import StringIO
 from bs4 import BeautifulSoup
 import pandas as pd
 
+from cellar_extractor.persistence import ensure_parent_dir
+
 warnings.filterwarnings("ignore")
 
 X = [
@@ -75,17 +77,17 @@ COLS = set(X + Y)
 COLS = sorted(COLS)
 
 
-def create_csv(filepath, encoding="UTF8", data=None):
+def create_csv(output_path, encoding="UTF8", data=None):
     """
     Method used after the json to csv conversion, to save the file
     in the processed directory.
     """
     if data != "":
-        csv_file = open(filepath, "w", encoding=encoding)
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(COLS)
-        csv_writer.writerows(data)
-        csv_file.close()
+        target = ensure_parent_dir(output_path)
+        with target.open("w", encoding=encoding, newline="") as csv_file:
+            csv_writer = csv.writer(csv_file)
+            csv_writer.writerow(COLS)
+            csv_writer.writerows(data)
 
 
 def json_to_csv(json_data):
@@ -169,10 +171,15 @@ def json_to_csv_returning(json_data):
 
 
 def json_to_csv_main(json_data, filepath):
+    warnings.warn(
+        "`json_to_csv_main` is deprecated; use `create_csv(json_to_csv(...), output_path=...)` patterns instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if json_data:
         final_data = json_to_csv(json_data)
         if final_data:
-            create_csv(filepath=filepath, encoding="UTF8", data=final_data)
+            create_csv(output_path=filepath, encoding="UTF8", data=final_data)
         else:
             logging.info("Error creating CSV file. Data is empty.")
             return False
