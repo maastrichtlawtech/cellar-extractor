@@ -390,6 +390,28 @@ Check:
 
 That is usually an upstream availability issue, not a silent extractor failure. Sector 8 is intentionally handled as best effort with explicit flags.
 
+## Releasing
+
+This project uses [setuptools_scm](https://github.com/pypa/setuptools_scm/) for automatic versioning based on git tags. Follow these steps to release a new version:
+
+### 1. Create a git tag
+
+```bash
+git tag v<major>.<minor>.<patch>
+```
+
+For example:
+
+```bash
+git tag v1.2.3
+```
+
+### 2. Push the tag to remote
+
+```bash
+git push origin v<major>.<minor>.<patch>
+```
+
 ## License
 
 [Apache License 2.0](https://opensource.org/licenses/Apache-2.0)
