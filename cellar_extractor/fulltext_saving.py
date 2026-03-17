@@ -94,7 +94,11 @@ def execute_sections_threads(
                 reasons.append("FULLTEXT_UNAVAILABLE_UPSTREAM")
             if summary_value == "" and "SUMMARY_UNAVAILABLE_UPSTREAM" not in reasons:
                 reasons.append("SUMMARY_UNAVAILABLE_UPSTREAM")
-            if text == "" and summary_value == "" and "UNAVAILABLE_UPSTREAM" not in reasons:
+            if (
+                text == ""
+                and summary_value == ""
+                and "UNAVAILABLE_UPSTREAM" not in reasons
+            ):
                 reasons.append("UNAVAILABLE_UPSTREAM")
             reasons_value = ";".join(dict.fromkeys(reasons))
 
