@@ -51,7 +51,9 @@ class CellarSparqlQuery:
             str: A string containing the endorsements text, parsed from HTML.
         """
 
-        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_endorsements")
+        values = self._get_case_law_manifestation_values(
+            number, "manifestation_case-law_endorsements"
+        )
         return BeautifulSoup("".join(values), "html.parser").text
 
     def get_grounds(self, number):
@@ -62,7 +64,9 @@ class CellarSparqlQuery:
         Returns:
             str: The grounds of the case-law document as plain text.
         """
-        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_grounds")
+        values = self._get_case_law_manifestation_values(
+            number, "manifestation_case-law_grounds"
+        )
         return BeautifulSoup("".join(values), "html.parser").text
 
     def get_keywords(self, number):
@@ -79,7 +83,9 @@ class CellarSparqlQuery:
             Exception: If there is an issue with the SPARQL query or the
             endpoint.
         """
-        values = self._get_case_law_manifestation_values(number, "manifestation_case-law_keywords")
+        values = self._get_case_law_manifestation_values(
+            number, "manifestation_case-law_keywords"
+        )
         return BeautifulSoup("".join(values), "html.parser").text
 
     def get_parties(self, number):
@@ -95,9 +101,13 @@ class CellarSparqlQuery:
             case-law document, with HTML tags removed.
         """
 
-        parties = self._get_case_law_manifestation_values(number, "manifestation_case-law_parties")
+        parties = self._get_case_law_manifestation_values(
+            number, "manifestation_case-law_parties"
+        )
         if len(parties) == 0:
-            parties = self._get_case_law_manifestation_values(number, "case-law_national_parties")
+            parties = self._get_case_law_manifestation_values(
+                number, "case-law_national_parties"
+            )
         return BeautifulSoup("".join(parties), "html.parser").text
 
     def get_subjects(self, number):
@@ -112,7 +122,9 @@ class CellarSparqlQuery:
             str: A string containing the subjects related to the
             given CELEX number, parsed from HTML.
         """
-        subjects = self._get_case_law_manifestation_values(number, "manifestation_case-law_subject")
+        subjects = self._get_case_law_manifestation_values(
+            number, "manifestation_case-law_subject"
+        )
         if len(subjects) == 0:
             self.sparql.setQuery(
                 f"""
@@ -149,6 +161,8 @@ class CellarSparqlQuery:
         it simply finds anything X or fewer hops away without linking those
         together.
         """
-        self.sparql.setQuery(_build_citation_query(source_celex, cites_depth, cited_depth))
+        self.sparql.setQuery(
+            _build_citation_query(source_celex, cites_depth, cited_depth)
+        )
         ret = self.sparql.queryAndConvert()
         return list(_extract_citation_targets(ret))
