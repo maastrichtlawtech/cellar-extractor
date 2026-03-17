@@ -59,7 +59,11 @@ def _query_ecli_window(starting_date=None, ending_date=None, limit=None, max_ret
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     sparql = SPARQLWrapper(endpoint)
     sparql.setReturnFormat(JSON)
-    sparql.setQuery(_build_ecli_query(starting_date=starting_date, ending_date=ending_date, limit=limit))
+    sparql.setQuery(
+        _build_ecli_query(
+            starting_date=starting_date, ending_date=ending_date, limit=limit
+        )
+    )
     ret = _query_with_retries(
         sparql,
         retries=max_retries,
@@ -117,12 +121,16 @@ def get_all_eclis(starting_date=None, ending_date=None, limit=None, max_retries=
         )
 
     collected = set()
-    for window_start, window_end in _build_ecli_windows(starting_date=starting_date, ending_date=ending_date):
+    for window_start, window_end in _build_ecli_windows(
+        starting_date=starting_date, ending_date=ending_date
+    ):
         remaining = None if limit is None else limit - len(collected)
         if remaining is not None and remaining <= 0:
             break
 
-        window_limit = remaining if remaining and remaining <= MAX_SORTED_TOP_LIMIT else None
+        window_limit = (
+            remaining if remaining and remaining <= MAX_SORTED_TOP_LIMIT else None
+        )
         collected.update(
             _query_ecli_window(
                 starting_date=window_start,
