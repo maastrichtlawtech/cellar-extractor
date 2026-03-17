@@ -245,7 +245,7 @@ def add_dictionary_to_df(df, dictionary, column_title):
     celex = df.loc[:, "CELEX IDENTIFIER"]
     for k in dictionary:
         matches = celex.fillna("").apply(
-            lambda value: k in [part.strip() for part in str(value).split(";")]
+            lambda value, k=k: k in [part.strip() for part in str(value).split(";")]
         )
         if matches.any():
             index = df.index[matches].tolist()
