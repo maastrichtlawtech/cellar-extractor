@@ -1,3 +1,4 @@
+import time
 from datetime import date, datetime, timedelta
 
 from SPARQLWrapper import SPARQLWrapper, JSON, POST
@@ -5,15 +6,20 @@ from SPARQLWrapper import SPARQLWrapper, JSON, POST
 DEFAULT_ECLI_START_DATE = "1954-01-01"
 MAX_SORTED_TOP_LIMIT = 10000
 ECLI_WINDOW_DAYS = 366
+SPARQL_REQUEST_TIMEOUT_SECONDS = 30
+SPARQL_RETRY_BACKOFF_BASE_SECONDS = 0.5
 
 
 def _query_with_retries(sparql, retries, error_message):
+    sparql.setTimeout(SPARQL_REQUEST_TIMEOUT_SECONDS)
     last_error = None
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             return sparql.queryAndConvert()
         except Exception as exc:
             last_error = exc
+            if attempt < retries - 1:
+                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt))
     raise RuntimeError(error_message) from last_error
 
 
@@ -138,6 +144,67 @@ def get_all_eclis(starting_date=None, ending_date=None, limit=None, max_retries=
     return eclis
 
 
+def get_raw_cellar_metadata_by_celex(
+    celex_ids,
+    get_labels=True,
+    force_readable_cols=True,
+    force_readable_vals=False,
+    max_retries=3,
+):
+    """Fetch CELLAR metadata triples keyed by CELEX rather than by ECLI.
+
+    Same shape as get_raw_cellar_metadata. Property keys are CDM predicate URI
+    local parts (stable IDs); values use skos:prefLabel resolution when
+    available, falling back to the raw object value. The legacy
+    get_labels / force_readable_* parameters are retained for backwards
+    compatibility but are now no-ops.
+    """
+    del get_labels, force_readable_cols, force_readable_vals  # legacy no-ops
+    if not celex_ids:
+        return {}
+
+    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
+    escaped = '", "'.join(celex_ids)
+    query = """
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        prefix skos: <http://www.w3.org/2004/02/skos/core#>
+        select
+        distinct ?celex ?p ?o ?olabel
+        where {
+            ?doc cdm:resource_legal_id_celex ?celex .
+            FILTER(STR(?celex) in ("%s"))
+            ?doc ?p ?o .
+            OPTIONAL {
+                ?o skos:prefLabel ?olabel .
+                FILTER(lang(?olabel) = "en") .
+            }
+        }
+    """ % escaped
+
+    sparql = SPARQLWrapper(endpoint)
+    sparql.setReturnFormat(JSON)
+    sparql.setMethod(POST)
+    sparql.setQuery(query)
+    ret = _query_with_retries(
+        sparql,
+        retries=max_retries,
+        error_message="Failed to query CELLAR metadata by CELEX after retries",
+    )
+
+    metadata = {celex: {} for celex in celex_ids}
+    for res in ret["results"]["bindings"]:
+        celex = res["celex"]["value"]
+        if celex not in metadata:
+            metadata[celex] = {}
+        predicate_uri = res["p"]["value"]
+        if not predicate_uri.startswith("http://publications.europa.eu/ontology/cdm"):
+            continue
+        key = predicate_uri.rsplit("#", 1)[-1]
+        val = res.get("olabel", {}).get("value") or res["o"]["value"]
+        metadata[celex].setdefault(key, []).append(val)
+    return metadata
+
+
 def get_raw_cellar_metadata(
     eclis,
     get_labels=True,
@@ -145,53 +212,34 @@ def get_raw_cellar_metadata(
     force_readable_vals=False,
     max_retries=3,
 ):
-    """Gets cellar metadata
+    """Fetch CDM predicate triples for each ECLI.
 
-    :param eclis: The ECLIs for which to retrieve metadata
-    :type eclis: list[str]
-    :param get_labels: Flag to get human-readable labels for the properties,
-    defaults to True
-    :type get_labels: bool, optional
-    :param force_readable_cols: Flag to remove any non-labelled properties
-    from the resulting dict, defaults to True
-    :type force_readable_cols: bool, optional
-    :param force_readable_vals: Flag to remove any non-labelled values from
-    the resulting dict, defaults to False
-    :type force_readable_vals: bool, optional
-    :return: Dictionary containing metadata. Top-level keys are ECLIs, second
-    level are property names
-    :rtype: Dict[str, Dict[str, list[str]]]
+    Returns a dict ``{ecli: {predicate_local_part: [values, ...]}}``. Property
+    keys are stable CDM predicate URI local parts (e.g. ``case-law_ecli``,
+    ``resource_legal_id_celex``); values use skos:prefLabel resolution when
+    available, falling back to the raw object value. The legacy
+    get_labels / force_readable_* parameters are retained for backwards
+    compatibility but are now no-ops.
     """
-
-    # Find every outgoing edge from an ECLI document and return it
-    # (essentially giving s -p> o)
-    # Also get labels for p/o (optionally) and then make sure to only return
-    # distinct triples
+    del get_labels, force_readable_cols, force_readable_vals  # legacy no-ops
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     query = """
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         prefix skos: <http://www.w3.org/2004/02/skos/core#>
-        prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         select
-        distinct ?ecli ?p ?o ?plabel ?olabel
+        distinct ?ecli ?p ?o ?olabel
         where {
             ?doc cdm:case-law_ecli ?ecli .
             FILTER(STR(?ecli) in ("%s"))
             ?doc ?p ?o .
             OPTIONAL {
-                ?p rdfs:label ?plabel
-            }
-            OPTIONAL {
                 ?o skos:prefLabel ?olabel .
                 FILTER(lang(?olabel) = "en") .
             }
         }
-    """ % (
-        '", "'.join(eclis)
-    )
+    """ % '", "'.join(eclis)
 
     sparql = SPARQLWrapper(endpoint)
-
     sparql.setReturnFormat(JSON)
     sparql.setMethod(POST)
     sparql.setQuery(query)
@@ -200,42 +248,14 @@ def get_raw_cellar_metadata(
         retries=max_retries,
         error_message="Failed to query CELLAR metadata after retries",
     )
-    # Create one dict for each document
-    metadata = {}
-    for ecli in eclis:
-        metadata[ecli] = {}
 
-    # Take each triple, check which source doc it belongs to, key/value pair
-    # into its dict derived from the p and o in the query
+    metadata = {ecli: {} for ecli in eclis}
     for res in ret["results"]["bindings"]:
         ecli = res["ecli"]["value"]
-        # We only want cdm predicates
-        if not res["p"]["value"].startswith("http://publications.europa.eu/ontology/cdm"):
+        predicate_uri = res["p"]["value"]
+        if not predicate_uri.startswith("http://publications.europa.eu/ontology/cdm"):
             continue
-
-        # Check if we have predicate labels
-        if "plabel" in res and get_labels:
-            key = res["plabel"]["value"]
-        elif force_readable_cols:
-            continue
-        else:
-            key = res["p"]["value"]
-            key = key.split("#")[1]
-
-        # Check if we have target labels
-        if "olabel" in res and get_labels:
-            val = res["olabel"]["value"]
-        elif force_readable_vals:
-            continue
-        else:
-            val = res["o"]["value"]
-
-        # We store the values for each property in a list. For some properties
-        # this is not necessary, but if a property can be assigned multiple
-        # times, this is important. Notable, for example is citations.
-        if key in metadata[ecli]:
-            metadata[ecli][key].append(val)
-        else:
-            metadata[ecli][key] = [val]
-
+        key = predicate_uri.rsplit("#", 1)[-1]
+        val = res.get("olabel", {}).get("value") or res["o"]["value"]
+        metadata[ecli].setdefault(key, []).append(val)
     return metadata

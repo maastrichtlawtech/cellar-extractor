@@ -10,6 +10,7 @@ class _FakeSparql:
         self.payload = payload
         self.query = ""
         self.method = None
+        self.timeout = None
 
     def setReturnFormat(self, *_args, **_kwargs):
         return None
@@ -19,6 +20,9 @@ class _FakeSparql:
 
     def setQuery(self, query):
         self.query = query
+
+    def setTimeout(self, seconds):
+        self.timeout = seconds
 
     def queryAndConvert(self):
         return self.payload
@@ -48,7 +52,6 @@ def test_get_raw_cellar_metadata_filters_requested_eclis(monkeypatch):
                 {
                     "ecli": {"value": "ECLI:EU:C:2025:1"},
                     "p": {"value": "http://publications.europa.eu/ontology/cdm#case-law_ecli"},
-                    "plabel": {"value": "ECLI"},
                     "o": {"value": "ECLI:EU:C:2025:1"},
                 }
             ]
@@ -59,7 +62,8 @@ def test_get_raw_cellar_metadata_filters_requested_eclis(monkeypatch):
 
     result = cellar_queries.get_raw_cellar_metadata(["ECLI:EU:C:2025:1"])
 
-    assert result["ECLI:EU:C:2025:1"]["ECLI"] == ["ECLI:EU:C:2025:1"]
+    # Property keys are now CDM predicate URI local parts, not rdfs:label.
+    assert result["ECLI:EU:C:2025:1"]["case-law_ecli"] == ["ECLI:EU:C:2025:1"]
     assert 'FILTER(STR(?ecli) in ("ECLI:EU:C:2025:1"))' in fake.query
     assert fake.method == cellar_queries.POST
 
@@ -79,6 +83,9 @@ class _WindowedFakeSparql:
     def setQuery(self, query):
         self.query = query
         self.queries.append(query)
+
+    def setTimeout(self, *_args, **_kwargs):
+        return None
 
     def queryAndConvert(self):
         start = re.search(r'FILTER\(STR\(\?date\) >= "([^"]+)"\)', self.query).group(1)

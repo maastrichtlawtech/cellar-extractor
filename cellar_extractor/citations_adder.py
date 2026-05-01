@@ -77,7 +77,7 @@ def add_citations(data, threads):
     * More details in the query method.
     """
     name = "WORK CITES WORK. CI / CJ"
-    celex = data.loc[:, "CELEX IDENTIFIER"]
+    celex = data.loc[:, "celex"]
 
     length = celex.size
     if length > 100:  # to avoid getting problems with small files
@@ -98,7 +98,7 @@ def add_citations(data, threads):
     celexes = pd.unique(df.loc[:, "celex"])
     citations = pd.Series([], dtype="string")
     for celex in celexes:
-        index = data[data["CELEX IDENTIFIER"] == celex].index.values
+        index = data[data["celex"] == celex].index.values
         cited = df[df["celex"] == celex].loc[:, "citedD"]
         string = ";".join(cited)
         citations[index[0]] = string
@@ -242,7 +242,7 @@ def add_dictionary_to_df(df, dictionary, column_title):
     exists in the original dataframe.
     """
     column = pd.Series([], dtype="string")
-    celex = df.loc[:, "CELEX IDENTIFIER"]
+    celex = df.loc[:, "celex"]
     for k in dictionary:
         matches = celex.fillna("").apply(
             lambda value: k in [part.strip() for part in str(value).split(";")]
@@ -267,7 +267,7 @@ def add_citations_separate_webservice(data, username, password):
         DeprecationWarning,
         stacklevel=2,
     )
-    celex = data.loc[:, "CELEX IDENTIFIER"]
+    celex = data.loc[:, "celex"]
     query = " SELECT CI, DN WHERE DN = 62019CJ0668"
     response = run_eurlex_webservice_query(query, username, password)
     if response.status_code == 500:
@@ -322,7 +322,7 @@ def add_citations_separate(data, threads):
     * More details in the query method.
     """
 
-    celex = data.loc[:, "CELEX IDENTIFIER"]
+    celex = data.loc[:, "celex"]
     unique_celex = [
         value
         for value in pd.unique(celex.fillna("").astype(str))
@@ -366,7 +366,7 @@ def add_citations_separate(data, threads):
 
     citing_df = pd.Series([], dtype="string")
     cited_df = pd.Series([], dtype="string")
-    for index, cel in data.loc[:, "CELEX IDENTIFIER"].items():
+    for index, cel in data.loc[:, "celex"].items():
         cited_df[index] = cited_map.get(cel, "")
         citing_df[index] = citing_map.get(cel, "")
 

@@ -72,7 +72,7 @@ def test_get_entire_page_uses_infocuria_data(monkeypatch):
             "directory_codes": "15.20.10",
             "advocate": "Adv Name",
             "judge": "Judge Name",
-            "affecting_strings": "C-1/20",
+            "affecting_string": "joined: C-1/20",
             "citations_extra": "Party A;Judgment",
         },
     )

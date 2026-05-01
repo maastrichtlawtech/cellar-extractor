@@ -51,6 +51,7 @@ The extractor is currently centered on:
 
 - **sector 6** case law: CJEU-style material via InfoCuria
 - **sector 8** case law: mixed / national-case-law material via CELLAR RDF + item downloads
+- **sector 3** legislation (and **sector 0** consolidated versions): full XHTML via the CELLAR REST API content-negotiation endpoint
 
 The main workflow has two stages.
 
@@ -70,6 +71,7 @@ The citation graph is now extracted through the public CELLAR SPARQL endpoint. L
 | Citation edges (`citing`, `cited_by`) | CELLAR SPARQL |
 | Sector 6 full text and structured metadata | InfoCuria |
 | Sector 8 full text and summaries | CELLAR RDF + downloadable `item` manifestations |
+| Sector 3 legislation full text (and sector 0 consolidated) | CELLAR REST `resource/celex/{CELEX}` with `Accept: application/xhtml+xml` |
 | Legacy citation comparison only | EUR-Lex SOAP webservice |
 
 ## Quick Start
@@ -134,7 +136,22 @@ cell.get_cellar_extra(
 )
 ```
 
-### 3. Build A Citation Graph
+### 3. Fetch Legislation By CELEX (Sector 3 / Sector 0)
+
+Legislation does not have an ECLI and is not part of `get_cellar(...)`. To fetch a regulation, directive, or consolidated version directly:
+
+```python
+import cellar_extractor as cell
+
+gdpr = cell.get_legislation_by_celex_id("32016R0679", language="EN")
+print(gdpr["text_source"])     # "CELLAR_REST_XHTML"
+print(gdpr["text_format"])     # "xhtml"
+print(gdpr["text"][:200])      # plain-text extraction of the XHTML
+```
+
+This calls the CELLAR content-negotiation REST endpoint (`https://publications.europa.eu/resource/celex/{CELEX}`) with `Accept: application/xhtml+xml` and returns the same dict shape as the case-law per-CELEX paths (`html`, `text`, `text_language`, `missing_reasons`, etc.). Consolidated CELEXes such as `02002L0058-20091219` are handled the same way.
+
+### 4. Build A Citation Graph
 
 ```python
 import cellar_extractor as cell
@@ -144,7 +161,7 @@ nodes, edges = cell.get_nodes_and_edges_lists(extra_df, only_local=True)
 
 `only_local=True` keeps only edges whose target CELEX is also present in `extra_df`.
 
-### 4. Filter By Subject Matter
+### 5. Filter By Subject Matter
 
 ```python
 filtered = cell.filter_subject_matter(extra_df, "competition")
@@ -248,8 +265,9 @@ Imported from [`cellar_extractor/__init__.py`](/Users/davidwickerhf/Projects/wor
 
 | Function / class | Purpose |
 | --- | --- |
-| `get_cellar(...)` | Fetch base CELLAR metadata |
-| `get_cellar_extra(...)` | Fetch enriched metadata + full text |
+| `get_cellar(...)` | Fetch base CELLAR metadata (case law only) |
+| `get_cellar_extra(...)` | Fetch enriched metadata + full text (case law only) |
+| `get_legislation_by_celex_id(celex, language="EN")` | Fetch sector 3 / sector 0 legislation XHTML by CELEX |
 | `get_nodes_and_edges_lists(df, only_local=False)` | Build citation graph lists |
 | `filter_subject_matter(df, phrase)` | Filter dataframe by subject phrase |
 | `FetchOperativePart` | Extract operative part from a single case document |
@@ -331,6 +349,7 @@ These are the upstream systems the extractor relies on.
 | InfoCuria `https://infocuriaws.curia.europa.eu/...` | sector 6 text and metadata |
 | InfoCuria `https://infocuria.curia.europa.eu/document/...` | sector 6 document HTML |
 | CELLAR resource/item URLs under `https://publications.europa.eu/resource/cellar/...` | sector 8 downloadable text / summary manifestations |
+| CELLAR REST `https://publications.europa.eu/resource/celex/{CELEX}` (with `Accept: application/xhtml+xml`) | sector 3 legislation and sector 0 consolidated XHTML |
 | EUR-Lex SOAP `https://eur-lex.europa.eu/EURLexWebService?wsdl` | legacy redundancy tests only |
 
 ## Tests

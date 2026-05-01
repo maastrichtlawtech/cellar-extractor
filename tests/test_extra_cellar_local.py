@@ -5,7 +5,7 @@ from cellar_extractor import cellar_extra_extract
 
 
 def test_extra_cellar_always_adds_citations_before_sections(monkeypatch):
-    data = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    data = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     calls = []
 
     def _fake_add_citations(frame, threads):
@@ -22,7 +22,7 @@ def test_extra_cellar_always_adds_citations_before_sections(monkeypatch):
 
     enriched, fulltext = cellar_extra_extract.extra_cellar(data=data.copy(), threads=3)
 
-    assert calls[0] == ("citations", 3, ["ECLI", "CELEX IDENTIFIER"])
+    assert calls[0] == ("citations", 3, ["ecli", "celex"])
     assert calls[1][0] == "sections"
     assert "citing" in enriched.columns
     assert "cited_by" in enriched.columns
@@ -30,7 +30,7 @@ def test_extra_cellar_always_adds_citations_before_sections(monkeypatch):
 
 
 def test_extra_cellar_writes_metadata_and_fulltext_to_explicit_paths(monkeypatch, tmp_path):
-    data = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    data = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
 
     monkeypatch.setattr(
         cellar_extra_extract,
@@ -56,7 +56,7 @@ def test_extra_cellar_writes_metadata_and_fulltext_to_explicit_paths(monkeypatch
 
     assert metadata_path.exists()
     assert fulltext == [{"celex": "62025CJ0001", "path": str(fulltext_path)}]
-    assert "CELEX IDENTIFIER" in enriched.columns
+    assert "celex" in enriched.columns
 
 
 def test_extra_cellar_input_path_uses_derived_output_paths_without_cwd_side_effects(
@@ -64,7 +64,7 @@ def test_extra_cellar_input_path_uses_derived_output_paths_without_cwd_side_effe
 ):
     input_path = tmp_path / "inputs" / "cases.csv"
     input_path.parent.mkdir(parents=True)
-    pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]}).to_csv(
+    pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]}).to_csv(
         input_path, index=False
     )
     seen = {}
@@ -86,7 +86,7 @@ def test_extra_cellar_input_path_uses_derived_output_paths_without_cwd_side_effe
         threads=1,
     )
 
-    assert enriched.loc[0, "CELEX IDENTIFIER"] == "62025CJ0001"
+    assert enriched.loc[0, "celex"] == "62025CJ0001"
     assert fulltext == [{"celex": "62025CJ0001"}]
     assert input_path.exists()
     assert (tmp_path / "inputs" / "cases_fulltext.json").exists() is False
@@ -98,7 +98,7 @@ def test_extra_cellar_input_path_uses_derived_output_paths_without_cwd_side_effe
 
 def test_extra_cellar_filepath_alias_emits_deprecation_warning(monkeypatch, tmp_path):
     input_path = tmp_path / "cases.csv"
-    pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]}).to_csv(
+    pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]}).to_csv(
         input_path, index=False
     )
     monkeypatch.setattr(
@@ -117,7 +117,7 @@ def test_extra_cellar_filepath_alias_emits_deprecation_warning(monkeypatch, tmp_
 
 
 def test_extra_cellar_ignores_legacy_webservice_credentials(monkeypatch, caplog):
-    data = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    data = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     caplog.set_level("INFO")
 
     monkeypatch.setattr(

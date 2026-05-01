@@ -8,13 +8,15 @@ from cellar_extractor import cellar
 
 
 def _base_metadata(ecli, celex):
+    """Return metadata in the new URI-keyed shape produced by
+    cellar_queries.get_raw_cellar_metadata."""
     return {
         ecli: {
-            "ECLI": [ecli],
-            "CELEX IDENTIFIER": [celex],
-            "DATE OF DOCUMENT": ["2025-01-01"],
-            "TYPE OF LEGAL RESOURCE": ["CJ"],
-            "SECTOR IDENTIFIER": ["6"],
+            "case-law_ecli": [ecli],
+            "resource_legal_id_celex": [celex],
+            "work_date_document": ["2025-01-01"],
+            "resource_legal_type": ["CJ"],
+            "resource_legal_id_sector": ["6"],
         }
     }
 
@@ -44,7 +46,7 @@ def test_get_cellar_csv_in_memory(monkeypatch):
 
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 2
-    assert set(df["ECLI"].tolist()) == {"E1", "E2"}
+    assert set(df["ecli"].tolist()) == {"E1", "E2"}
 
 
 def test_get_cellar_json_in_memory(monkeypatch):
@@ -64,7 +66,7 @@ def test_get_cellar_json_in_memory(monkeypatch):
     )
 
     assert isinstance(output, dict)
-    assert output["E1"]["CELEX IDENTIFIER"] == ["62025CJ0001"]
+    assert output["E1"]["resource_legal_id_celex"] == ["62025CJ0001"]
 
 
 def test_get_cellar_json_save_file(monkeypatch, tmp_path):
@@ -131,7 +133,7 @@ def test_get_cellar_save_file_supports_custom_output_path(monkeypatch, tmp_path)
 
     assert output_path.exists()
     assert isinstance(result, pd.DataFrame)
-    assert result.loc[0, "CELEX IDENTIFIER"] == "62025CJ0001"
+    assert result.loc[0, "celex"] == "62025CJ0001"
 
 
 def test_get_cellar_save_to_output_dir_creates_only_requested_parents(monkeypatch, tmp_path):
@@ -195,11 +197,11 @@ def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkey
             time.sleep(0.05)
         return {
             ecli: {
-                "ECLI": [ecli],
-                "CELEX IDENTIFIER": [f"6{index:09d}"],
-                "DATE OF DOCUMENT": ["2025-01-01"],
-                "TYPE OF LEGAL RESOURCE": ["CJ"],
-                "SECTOR IDENTIFIER": ["6"],
+                "case-law_ecli": [ecli],
+                "resource_legal_id_celex": [f"6{index:09d}"],
+                "work_date_document": ["2025-01-01"],
+                "resource_legal_type": ["CJ"],
+                "resource_legal_id_sector": ["6"],
             }
             for index, ecli in enumerate(batch)
         }
@@ -214,11 +216,11 @@ def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkey
         file_format="csv",
     )
 
-    assert df["ECLI"].tolist() == eclis
+    assert df["ecli"].tolist() == eclis
 
 
 def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
-    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
@@ -254,7 +256,7 @@ def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
 
 
 def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path):
-    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
@@ -286,7 +288,7 @@ def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path)
 
 
 def test_get_cellar_extra_supports_independent_output_paths(monkeypatch, tmp_path):
-    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
@@ -315,7 +317,7 @@ def test_get_cellar_extra_supports_independent_output_paths(monkeypatch, tmp_pat
 
 def test_get_cellar_extra_in_memory_does_not_create_default_output_dir(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    base_df = pd.DataFrame({"ECLI": ["E1"], "CELEX IDENTIFIER": ["62025CJ0001"]})
+    base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     monkeypatch.setattr(
         cellar,
@@ -356,7 +358,7 @@ def test_get_cellar_save_file_alias_still_works(monkeypatch):
 def test_filter_subject_matter_case_insensitive():
     df = pd.DataFrame(
         {
-            "LEGAL RESOURCE IS ABOUT SUBJECT MATTER": [
+            "subject_matter": [
                 "Competition law",
                 "Tax law",
                 "",

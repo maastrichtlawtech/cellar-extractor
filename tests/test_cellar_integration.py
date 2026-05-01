@@ -50,16 +50,16 @@ def test_get_raw_cellar_metadata_live_returns_requested_documents_with_core_fiel
     assert set(metadata) == set(eclis)
     for ecli in eclis:
         row = metadata[ecli]
-        assert row["ECLI"] == [ecli]
-        assert row["Celex identifier"][0].strip() != ""
-        assert row["Date of document"][0].strip() != ""
-        assert row["Sector identifier"][0].strip() != ""
+        assert row["case-law_ecli"] == [ecli]
+        assert row["resource_legal_id_celex"][0].strip() != ""
+        assert row["work_date_document"][0].strip() != ""
+        assert row["resource_legal_id_sector"][0].strip() != ""
 
 
 def test_get_cellar_live_csv_preserves_requested_count_and_core_columns():
     expected_eclis = _sample_eclis(limit=3)
     payload = get_raw_cellar_metadata(expected_eclis)
-    expected_celexes = {payload[ecli]["Celex identifier"][0].strip() for ecli in expected_eclis}
+    expected_celexes = {payload[ecli]["resource_legal_id_celex"][0].strip() for ecli in expected_eclis}
 
     df = cellar.get_cellar(
         ed=END_DATE,
@@ -70,16 +70,16 @@ def test_get_cellar_live_csv_preserves_requested_count_and_core_columns():
     )
 
     matched_rows = df[
-        df["CELEX IDENTIFIER"]
+        df["celex"]
         .fillna("")
         .astype(str)
         .map(lambda value: bool(_normalize_csv_celexes(value) & expected_celexes))
     ]
     matched_celexes = set()
-    for value in matched_rows["CELEX IDENTIFIER"].fillna("").astype(str):
+    for value in matched_rows["celex"].fillna("").astype(str):
         matched_celexes.update(_normalize_csv_celexes(value) & expected_celexes)
 
     assert matched_celexes == expected_celexes
-    for column in ["CELEX IDENTIFIER", "DATE OF DOCUMENT", "SECTOR IDENTIFIER"]:
+    for column in ["celex", "date_publication", "sector"]:
         values = matched_rows[column].fillna("").astype(str).str.strip()
         assert values.ne("").all()

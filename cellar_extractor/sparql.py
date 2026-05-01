@@ -1,15 +1,34 @@
+import time
+
 from SPARQLWrapper import SPARQLWrapper, JSON, CSV, POST
 import requests
 
 
+SPARQL_REQUEST_TIMEOUT_SECONDS = 30
+SPARQL_RETRY_BACKOFF_BASE_SECONDS = 0.5
+
+
 def _query_with_retries(sparql, retries, error_message):
+    sparql.setTimeout(SPARQL_REQUEST_TIMEOUT_SECONDS)
     last_error = None
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             return sparql.queryAndConvert()
         except Exception as exc:
             last_error = exc
+            if attempt < retries - 1:
+                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt))
     raise RuntimeError(error_message) from last_error
+
+
+def _cites_path(depth):
+    # The property-path quantifier `cdm:work_cites_work{1,1}` is semantically
+    # identical to a direct triple at depth=1 but pessimises the query plan on
+    # the CELLAR endpoint and consistently hits the request timeout. Emit the
+    # direct triple at depth=1 and only use the quantifier for multi-hop.
+    if depth == 1:
+        return "cdm:work_cites_work"
+    return "cdm:work_cites_work{1,%i}" % depth
 
 
 def _build_citation_relations_query(celexes, cites_depth=1, cited_depth=1):
@@ -24,12 +43,12 @@ def _build_citation_relations_query(celexes, cites_depth=1, cited_depth=1):
             SELECT ?celex ?citedD ?direction WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex .
                 FILTER(STR(?celex) in ("%s")) .
-                ?doc cdm:work_cites_work{1,%i} ?cited .
+                ?doc %s ?cited .
                 ?cited cdm:resource_legal_id_celex ?citedD .
                 BIND("outbound" AS ?direction)
             }
             """
-            % (input_celex, cites_depth)
+            % (input_celex, _cites_path(cites_depth))
         )
     if cited_depth > 0:
         subqueries.append(
@@ -37,12 +56,12 @@ def _build_citation_relations_query(celexes, cites_depth=1, cited_depth=1):
             SELECT ?celex ?citedD ?direction WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex .
                 FILTER(STR(?celex) in ("%s")) .
-                ?cited cdm:work_cites_work{1,%i} ?doc .
+                ?cited %s ?doc .
                 ?cited cdm:resource_legal_id_celex ?citedD .
                 BIND("inbound" AS ?direction)
             }
             """
-            % (input_celex, cited_depth)
+            % (input_celex, _cites_path(cited_depth))
         )
 
     if not subqueries:
@@ -68,22 +87,22 @@ def _build_citation_query(source_celex, cites_depth, cited_depth):
             """
             SELECT ?name2 WHERE {
                 ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                ?doc cdm:work_cites_work{1,%i} ?cited .
+                ?doc %s ?cited .
                 ?cited cdm:resource_legal_id_celex ?name2 .
             }
             """
-            % (source_celex, cites_depth)
+            % (source_celex, _cites_path(cites_depth))
         )
     if cited_depth > 0:
         subqueries.append(
             """
             SELECT ?name2 WHERE {
                 ?doc cdm:resource_legal_id_celex "%s"^^xsd:string .
-                ?cited cdm:work_cites_work{1,%i} ?doc .
+                ?cited %s ?doc .
                 ?cited cdm:resource_legal_id_celex ?name2 .
             }
             """
-            % (source_celex, cited_depth)
+            % (source_celex, _cites_path(cited_depth))
         )
 
     if not subqueries:
@@ -186,14 +205,14 @@ def get_citations_csv(celex, max_retries=3):
             SELECT ?celex ?citedD WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex
                  FILTER(STR(?celex) in ("%s")).
-                ?doc cdm:work_cites_work{1,1} ?cited .
+                ?doc cdm:work_cites_work ?cited .
                 ?cited cdm:resource_legal_id_celex ?citedD .
             }
         } UNION {
             SELECT ?celex ?citedD WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex
                  FILTER(STR(?celex) in ("%s")).
-                ?cited cdm:work_cites_work{1,1} ?doc .
+                ?cited cdm:work_cites_work ?doc .
                 ?cited cdm:resource_legal_id_celex ?citedD .
             }
         }
@@ -247,13 +266,13 @@ def get_citing(celex, cites_depth, max_retries=3):
             SELECT ?celex ?citedD WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex
                  FILTER(STR(?celex) in ("%s")).
-                ?doc cdm:work_cites_work{1,%i} ?cited .
+                ?doc %s ?cited .
                 ?cited cdm:resource_legal_id_celex ?citedD .
             }
 }
        """ % (
         input_celex,
-        cites_depth,
+        _cites_path(cites_depth),
     )
 
     sparql = SPARQLWrapper(endpoint)
@@ -280,13 +299,13 @@ def get_cited(celex, cited_depth, max_retries=3):
             SELECT ?celex ?citedD WHERE {
                 ?doc cdm:resource_legal_id_celex ?celex
                  FILTER(STR(?celex) in ("%s")).
-                ?cited cdm:work_cites_work{1,%i} ?doc .
+                ?cited %s ?doc .
                 ?cited cdm:resource_legal_id_celex ?citedD .
             }
 }
        """ % (
         input_celex,
-        cited_depth,
+        _cites_path(cited_depth),
     )
 
     sparql = SPARQLWrapper(endpoint)

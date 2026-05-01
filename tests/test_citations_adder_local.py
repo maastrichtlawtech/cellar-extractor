@@ -13,7 +13,7 @@ def test_allowed_id_accepts_celex_prefix_6_or_8():
 
 
 def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "B"]})
+    data = pd.DataFrame({"celex": ["A", "B"]})
 
     def _fake_execute(relations_list, citations):
         relations_list.append(
@@ -37,7 +37,7 @@ def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
 
 
 def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch):
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "B", "C"]})
+    data = pd.DataFrame({"celex": ["A", "B", "C"]})
 
     def _fake_execute(relations_list, citations):
         relations_list.append(
@@ -61,7 +61,7 @@ def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch)
 
 
 def test_add_citations_separate_deduplicates_relations(monkeypatch):
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["A"]})
+    data = pd.DataFrame({"celex": ["A"]})
 
     def _fake_execute(relations_list, citations):
         relations_list.append(
@@ -84,7 +84,7 @@ def test_add_citations_separate_deduplicates_relations(monkeypatch):
 
 
 def test_add_citations_separate_deduplicates_duplicate_input_celexes(monkeypatch):
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["A", "A", "B"]})
+    data = pd.DataFrame({"celex": ["A", "A", "B"]})
     seen = []
 
     def _fake_execute(relations_list, citations):
@@ -108,7 +108,7 @@ def test_add_citations_separate_deduplicates_duplicate_input_celexes(monkeypatch
 
 
 def test_add_citations_separate_webservice_warns_on_use(monkeypatch):
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["62019CJ0668"]})
+    data = pd.DataFrame({"celex": ["62019CJ0668"]})
 
     class _Response:
         status_code = 200

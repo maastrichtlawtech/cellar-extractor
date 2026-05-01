@@ -2,6 +2,7 @@ from cellar_extractor.cellar import get_cellar
 from cellar_extractor.cellar import get_cellar_extra
 from cellar_extractor.cellar import get_nodes_and_edges_lists
 from cellar_extractor.cellar import filter_subject_matter
+from cellar_extractor.eurlex_scraping import get_legislation_by_celex_id
 from cellar_extractor.operative_extractions import FetchOperativePart
 from cellar_extractor.operative_extractions import Writing
 import logging

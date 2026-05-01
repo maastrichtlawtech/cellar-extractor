@@ -67,8 +67,9 @@ def test_get_citations_omits_reverse_branch_when_cited_depth_zero():
 
     query.get_citations("62000CJ0003", cites_depth=1, cited_depth=0)
 
-    assert "?doc cdm:work_cites_work{1,1} ?cited" in fake.query
-    assert "?cited cdm:work_cites_work" not in fake.query
+    assert "?doc cdm:work_cites_work ?cited" in fake.query
+    assert "{1," not in fake.query
+    assert "?cited cdm:work_cites_work ?doc" not in fake.query
     assert "UNION" not in fake.query
 
 
