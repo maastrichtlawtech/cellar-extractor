@@ -45,6 +45,58 @@ def test_get_all_eclis_includes_limit_when_requested(monkeypatch):
     assert 'FILTER(STR(?date) <= "2025-01-31")' in fake.query
 
 
+def test_get_all_eclis_supports_single_day_window(monkeypatch):
+    """sd == ed is a valid one-day window. Filter uses >=/<= so both endpoints
+    are inclusive — a doc with date_document == sd == ed should match."""
+    payload = {"results": {"bindings": [{"ecli": {"value": "ECLI:EU:C:2025:1"}}]}}
+    fake = _FakeSparql(payload)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    result = cellar_queries.get_all_eclis(
+        starting_date="2025-06-15",
+        ending_date="2025-06-15",
+        limit=10,
+    )
+
+    assert result == ["ECLI:EU:C:2025:1"]
+    assert 'FILTER(STR(?date) >= "2025-06-15")' in fake.query
+    assert 'FILTER(STR(?date) <= "2025-06-15")' in fake.query
+
+
+def test_get_all_eclis_handles_timestamped_end_date(monkeypatch):
+    """``ed`` may carry a time suffix (e.g. '2025-12-31T23:59:59'). The filter
+    is lexicographic on the date string and YYYY-MM-DD < YYYY-MM-DDT...,
+    so a doc dated YYYY-MM-DD passes ``<= YYYY-MM-DDT23:59:59``."""
+    payload = {"results": {"bindings": []}}
+    fake = _FakeSparql(payload)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    cellar_queries.get_all_eclis(
+        starting_date="2020-01-01",
+        ending_date="2020-12-31T23:59:59",
+        limit=5,
+    )
+
+    assert 'FILTER(STR(?date) >= "2020-01-01")' in fake.query
+    assert 'FILTER(STR(?date) <= "2020-12-31T23:59:59")' in fake.query
+
+
+def test_get_all_eclis_returns_empty_for_empty_window(monkeypatch):
+    """A date range with no matching documents returns an empty list,
+    not an error."""
+    payload = {"results": {"bindings": []}}
+    fake = _FakeSparql(payload)
+    monkeypatch.setattr(cellar_queries, "SPARQLWrapper", lambda *_args, **_kwargs: fake)
+
+    result = cellar_queries.get_all_eclis(
+        starting_date="1900-01-01",
+        ending_date="1900-12-31",
+        limit=100,
+    )
+
+    assert result == []
+
+
 def test_get_raw_cellar_metadata_filters_requested_eclis(monkeypatch):
     payload = {
         "results": {

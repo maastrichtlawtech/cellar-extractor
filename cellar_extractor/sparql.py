@@ -1,3 +1,5 @@
+import csv
+import io
 import time
 
 from SPARQLWrapper import SPARQLWrapper, JSON, CSV, POST
@@ -285,6 +287,58 @@ def get_citing(celex, cites_depth, max_retries=3):
         error_message="Failed to fetch citing cases after retries",
     )
     return ret.decode("utf-8")
+
+
+def resolve_celexes_for_cellar_uris(uris, max_retries=3, batch_size=400):
+    """Resolve CELLAR resource URIs (``http://publications.europa.eu/resource/cellar/<uuid>``)
+    to their CELEX identifiers.
+
+    Returns a dict ``{uri: celex}``. URIs without an indexed CELEX are absent
+    from the returned dict. This is the lightweight one-shot replacement for
+    the previous bidirectional citation-relations query: outbound citations
+    are already pulled as CELLAR URIs by ``get_raw_cellar_metadata`` (under
+    the ``work_cites_work`` predicate), so the only thing left to do is map
+    the URIs back to CELEXes — a much cheaper SPARQL pattern than the
+    UNION-bidirectional query that times out on the endpoint.
+    """
+    out = {}
+    endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
+    uri_list = list({u for u in uris if isinstance(u, str) and u.startswith("http")})
+    if not uri_list:
+        return out
+    for i in range(0, len(uri_list), batch_size):
+        chunk = uri_list[i : i + batch_size]
+        values = " ".join(f"<{u}>" for u in chunk)
+        query = (
+            "prefix cdm: <http://publications.europa.eu/ontology/cdm#>\n"
+            "SELECT DISTINCT ?doc ?celex WHERE {\n"
+            f"  VALUES ?doc {{ {values} }}\n"
+            "  ?doc cdm:resource_legal_id_celex ?celex .\n"
+            "}"
+        )
+        sparql = SPARQLWrapper(endpoint)
+        sparql.setReturnFormat(CSV)
+        sparql.setMethod(POST)
+        sparql.setQuery(query)
+        try:
+            ret = _query_with_retries(
+                sparql,
+                retries=max_retries,
+                error_message="Failed to resolve CELLAR URIs to CELEXes after retries",
+            )
+        except RuntimeError:
+            continue  # chunk-level failure must not poison the whole map
+        reader = csv.reader(io.StringIO(ret.decode("utf-8")))
+        rows = list(reader)
+        # Skip header row, parse each data row using proper CSV quoting rules
+        # (the SPARQL endpoint wraps string literals in double quotes which
+        # naïve ``.split(",")`` would leave embedded in the value).
+        for row in rows[1:]:
+            if len(row) >= 2:
+                doc, celex = row[0].strip(), row[1].strip()
+                if doc and celex:
+                    out[doc] = celex
+    return out
 
 
 def get_cited(celex, cited_depth, max_retries=3):

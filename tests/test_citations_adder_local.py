@@ -12,21 +12,35 @@ def test_allowed_id_accepts_celex_prefix_6_or_8():
     assert not citations_adder.allowed_id("32013R0575")
 
 
+def _patch_citation_sources(monkeypatch, uri_to_celex, get_cited_csv):
+    """Monkeypatch the two upstream functions add_citations_separate now uses:
+    `resolve_celexes_for_cellar_uris` for the outbound URI→CELEX mapping,
+    and `get_cited` for the inbound SPARQL query."""
+    monkeypatch.setattr(
+        citations_adder,
+        "resolve_celexes_for_cellar_uris",
+        lambda uris, **_kw: {u: uri_to_celex[u] for u in uris if u in uri_to_celex},
+    )
+    monkeypatch.setattr(
+        citations_adder,
+        "get_cited",
+        lambda celex, cited_depth, **_kw: get_cited_csv,
+    )
+
+
 def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
-    data = pd.DataFrame({"celex": ["A", "B"]})
-
-    def _fake_execute(relations_list, citations):
-        relations_list.append(
-            StringIO(
-                "celex,citedD,direction\n"
-                "A,CITED_A,inbound\n"
-                "B,CITED_B,inbound\n"
-                "A,CITING_A,outbound\n"
-                "B,CITING_B,outbound\n"
-            )
-        )
-
-    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+    data = pd.DataFrame({
+        "celex": ["A", "B"],
+        "work_cites_work": ["http://uri/citing_a", "http://uri/citing_b"],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={
+            "http://uri/citing_a": "CITING_A",
+            "http://uri/citing_b": "CITING_B",
+        },
+        get_cited_csv="celex,citedD\nA,CITED_A\nB,CITED_B\n",
+    )
 
     citations_adder.add_citations_separate(data, threads=2)
 
@@ -37,18 +51,15 @@ def test_add_citations_separate_maps_citing_and_cited(monkeypatch):
 
 
 def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch):
-    data = pd.DataFrame({"celex": ["A", "B", "C"]})
-
-    def _fake_execute(relations_list, citations):
-        relations_list.append(
-            StringIO(
-                "celex,citedD,direction\n"
-                "A,INBOUND_A,inbound\n"
-                "B,OUTBOUND_B,outbound\n"
-            )
-        )
-
-    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+    data = pd.DataFrame({
+        "celex": ["A", "B", "C"],
+        "work_cites_work": ["", "http://uri/out_b", ""],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={"http://uri/out_b": "OUTBOUND_B"},
+        get_cited_csv="celex,citedD\nA,INBOUND_A\n",
+    )
 
     citations_adder.add_citations_separate(data, threads=2)
 
@@ -61,47 +72,48 @@ def test_add_citations_separate_keeps_rows_with_one_sided_relations(monkeypatch)
 
 
 def test_add_citations_separate_deduplicates_relations(monkeypatch):
-    data = pd.DataFrame({"celex": ["A"]})
-
-    def _fake_execute(relations_list, citations):
-        relations_list.append(
-            StringIO(
-                "celex,citedD,direction\n"
-                "A,X,inbound\n"
-                "A,X,inbound\n"
-                "A,Y,inbound\n"
-                "A,Z,outbound\n"
-                "A,Z,outbound\n"
-            )
-        )
-
-    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+    data = pd.DataFrame({
+        "celex": ["A"],
+        # Same outbound URI repeated — must dedup to a single CELEX.
+        "work_cites_work": ["http://uri/z;http://uri/z;http://uri/q"],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={
+            "http://uri/z": "Z",
+            "http://uri/q": "Q",
+        },
+        # Inbound rows also duplicated.
+        get_cited_csv="celex,citedD\nA,X\nA,X\nA,Y\n",
+    )
 
     citations_adder.add_citations_separate(data, threads=1)
 
     assert data.loc[0, "cited_by"] == "X;Y"
-    assert data.loc[0, "citing"] == "Z"
+    assert data.loc[0, "citing"] == "Z;Q"
 
 
-def test_add_citations_separate_deduplicates_duplicate_input_celexes(monkeypatch):
-    data = pd.DataFrame({"celex": ["A", "A", "B"]})
-    seen = []
-
-    def _fake_execute(relations_list, citations):
-        seen.append(list(citations))
-        relations_list.append(
-            StringIO(
-                "celex,citedD,direction\n"
-                "A,X,outbound\n"
-                "B,Y,inbound\n"
-            )
-        )
-
-    monkeypatch.setattr(citations_adder, "execute_citations_separate", _fake_execute)
+def test_add_citations_separate_handles_duplicate_input_celexes(monkeypatch):
+    """Duplicate CELEXes in the input frame must get the same citing/cited_by
+    values on every row carrying that CELEX. The new outbound path is row-
+    scoped (each row's `work_cites_work` is resolved independently), so the
+    citing value follows the row's own URI list rather than being shared."""
+    data = pd.DataFrame({
+        "celex": ["A", "A", "B"],
+        "work_cites_work": [
+            "http://uri/out_a",
+            "http://uri/out_a",
+            "",
+        ],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={"http://uri/out_a": "X"},
+        get_cited_csv="celex,citedD\nB,Y\n",
+    )
 
     citations_adder.add_citations_separate(data, threads=3)
 
-    assert sorted(tuple(batch) for batch in seen) in ([("A", "B")], [("A",), ("B",)])
     assert data.loc[0, "citing"] == "X"
     assert data.loc[1, "citing"] == "X"
     assert data.loc[2, "cited_by"] == "Y"

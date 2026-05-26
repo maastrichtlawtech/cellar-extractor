@@ -88,8 +88,22 @@ Method for detecting code-words for case law directory codes for cellar.
 """
 
 _thread_local = threading.local()
-_rate_limit_lock = threading.Lock()
+# Per-bucket locks let independent endpoints (InfoCuria suggest, blob-html,
+# CELLAR REST, etc.) pace in parallel rather than serialising on a single
+# global mutex. The guard lock only protects the registry, never the sleep.
+_bucket_locks_guard = threading.Lock()
+_bucket_locks = {}
 _last_request_at = {}
+
+
+def _bucket_lock(bucket):
+    """Return the lock dedicated to ``bucket``, creating it on first use."""
+    with _bucket_locks_guard:
+        lock = _bucket_locks.get(bucket)
+        if lock is None:
+            lock = threading.Lock()
+            _bucket_locks[bucket] = lock
+        return lock
 
 
 def _normalize_celex(celex):
@@ -110,14 +124,26 @@ def _sleep_with_backoff(attempt, base=0.2):
 
 
 def _pace_requests(bucket, min_interval):
-    with _rate_limit_lock:
+    """Throttle requests to ``bucket`` so consecutive calls are at least
+    ``min_interval`` apart, **without serialising across buckets** and
+    **without holding any lock while sleeping**.
+
+    The bucket's slot is reserved atomically inside the lock (so concurrent
+    same-bucket waiters queue up correctly), then the sleep happens with no
+    lock held — letting other threads on other buckets proceed in parallel.
+    """
+    lock = _bucket_lock(bucket)
+    with lock:
         now = time.monotonic()
         last = _last_request_at.get(bucket, 0.0)
         wait = min_interval - (now - last)
-        if wait > 0:
-            time.sleep(wait)
-            now = time.monotonic()
-        _last_request_at[bucket] = now
+        # Reserve the next slot atomically. If the previous slot is in the
+        # future (because a concurrent waiter already reserved it), our wait
+        # extends to one min_interval past that.
+        next_slot = max(now, last + min_interval)
+        _last_request_at[bucket] = next_slot
+    if wait > 0:
+        time.sleep(wait)
 
 
 def _get_http_session():

@@ -163,8 +163,8 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     # -----------------------------------------------------------------------
     # A. Core identifiers
     # -----------------------------------------------------------------------
-    _entry("celex", "CELEX identifier — sector + year + type-letter + number, with optional consolidation suffix for sector 0.",
-           source="cdm", source_uri="resource_legal_id_celex", sector_affinity="any",
+    _entry("celex", "CELEX identifier(s) — sector + year + type-letter + number, with optional consolidation suffix for sector 0. Multi-valued when an ECLI bundles multiple works (e.g. judgment CELEX + summary CELEX with ``_RES`` suffix). For uniqueness use ``ecli`` as the primary key.",
+           source="cdm", source_uri="resource_legal_id_celex", cardinality="multi", sector_affinity="any",
            example="62024CJ0072"),
     _entry("ecli", "European Case Law Identifier. Empty for legislation.",
            source="cdm", source_uri="case-law_ecli", sector_affinity="case_law",
@@ -187,8 +187,8 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     _entry("alternate_identifiers", "All alternate identifier schemes for this work (celex:, ecli:, oj:, eli:, immc:).",
            source="cdm", source_uri="work_id_document", cardinality="multi", sector_affinity="any",
            example="celex:62023CO0800;ecli:ECLI:EU:C:2025:1"),
-    _entry("work_version", "Version label, e.g. definitive, rectified/1.",
-           source="cdm", source_uri="work_version", sector_affinity="any",
+    _entry("work_version", "Version label(s), e.g. definitive, rectified/1. Multi-valued when an ECLI bundles works at different revision states.",
+           source="cdm", source_uri="work_version", cardinality="multi", sector_affinity="any",
            example="definitive"),
 
     # -----------------------------------------------------------------------
@@ -201,8 +201,8 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     # -----------------------------------------------------------------------
     # C. Dates
     # -----------------------------------------------------------------------
-    _entry("date_publication", "Document delivery / publication date.",
-           source="cdm", source_uri="work_date_document", type_="date", sector_affinity="any",
+    _entry("date_publication", "Document delivery / publication date(s). Multi-valued when one ECLI bundles works delivered on different dates (e.g. judgment + summary on separate days).",
+           source="cdm", source_uri="work_date_document", type_="date", cardinality="multi", sector_affinity="any",
            example="2025-01-07"),
     _entry("date_of_request", "Date of request for an Opinion / preliminary ruling lodgement.",
            source="cdm", source_uri="resource_legal_date_request_opinion", type_="date", sector_affinity="case_law",
@@ -210,11 +210,11 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     _entry("date_of_creation", "Most recent CMR last-modified timestamp (multi-valued ;-joined when re-indexed).",
            source="cdm", source_uri="lastModificationDate", type_="datetime", cardinality="multi", sector_affinity="any",
            example="2026-04-17T20:56:41.157+02:00"),
-    _entry("creation_date", "Original CMR record-creation timestamp.",
-           source="cdm", source_uri="creationDate", type_="datetime", sector_affinity="any",
+    _entry("creation_date", "Original CMR record-creation timestamp(s). Multi-valued when an ECLI bundles multiple works (each with its own CMR record).",
+           source="cdm", source_uri="creationDate", type_="datetime", cardinality="multi", sector_affinity="any",
            example="2025-01-15T07:49:16.490+01:00"),
-    _entry("work_date_creation_legacy", "Legacy creation date carried from before the modern CMR.",
-           source="cdm", source_uri="work_date_creation_legacy", type_="date", sector_affinity="any",
+    _entry("work_date_creation_legacy", "Legacy creation date(s) carried from before the modern CMR. Multi-valued when an ECLI bundles multiple works.",
+           source="cdm", source_uri="work_date_creation_legacy", type_="date", cardinality="multi", sector_affinity="any",
            example="2025-01-15"),
     _entry("date_signature", "Date the legal act was signed.",
            source="cdm", source_uri="resource_legal_date_signature", type_="date", sector_affinity="legislation",
@@ -242,11 +242,11 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     # -----------------------------------------------------------------------
     # E. Procedure
     # -----------------------------------------------------------------------
-    _entry("judicial_procedure_type", "Broad procedural class.",
-           source="cdm", source_uri="case-law_has_procjur", sector_affinity="case_law",
+    _entry("judicial_procedure_type", "Broad procedural class. Multi-valued for joined cases or rows aggregating multiple works of different procedural types.",
+           source="cdm", source_uri="case-law_has_procjur", cardinality="multi", sector_affinity="case_law",
            example="Reference for a preliminary ruling"),
-    _entry("type_procedure", "Refined procedural label, often with state qualifier.",
-           source="cdm", source_uri="case-law_has_type_procedure_concept_type_procedure", sector_affinity="case_law",
+    _entry("type_procedure", "Refined procedural label, often with state qualifier. Multi-valued for the same reason as judicial_procedure_type.",
+           source="cdm", source_uri="case-law_has_type_procedure_concept_type_procedure", cardinality="multi", sector_affinity="case_law",
            example="Reference for a preliminary ruling - inadmissible"),
     _entry("language_procedure", "Procedural language.",
            source="cdm", source_uri="case-law_uses_procedure_language", sector_affinity="case_law",
@@ -279,8 +279,8 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     _entry("keywords", "Keyword surface form of eurovoc; same content as eurovoc on most rows for backwards compatibility.",
            source="infocuria", source_uri="matCodeML", cardinality="multi", sector_affinity="case_law",
            example="Fundamental rights;Free movement of goods"),
-    _entry("based_on_treaty", "Treaty basis for a legal resource.",
-           source="cdm", source_uri="resource_legal_based_on_concept_treaty", cardinality="multi", sector_affinity="legislation",
+    _entry("based_on_treaty", "Treaty basis. Populated both for legislative acts (the treaty article(s) the act is based on) and for case-law documents that interpret a treaty.",
+           source="cdm", source_uri="resource_legal_based_on_concept_treaty", cardinality="multi", sector_affinity="any",
            example="Treaty on the Functioning of the European Union (consolidated version 2012)"),
 
     # -----------------------------------------------------------------------
@@ -320,8 +320,8 @@ FIELD_MANIFEST: List[Dict[str, Any]] = [
     # -----------------------------------------------------------------------
     # H. National-judgement passthrough (sector 6 + sector 8)
     # -----------------------------------------------------------------------
-    _entry("national_judgement", "Raw <national_judgement> XML block — referring national court, decision date, case ids.",
-           source="cdm", source_uri="case-law_national-judgement", type_="xml", sector_affinity="case_law",
+    _entry("national_judgement", "Raw <national_judgement> XML block — referring national court, decision date, case ids. Multi-valued when an ECLI bundles multiple works each carrying their own block.",
+           source="cdm", source_uri="case-law_national-judgement", type_="xml", cardinality="multi", sector_affinity="case_law",
            example="<national_judgement>…</national_judgement>"),
     _entry("references_journals", "References to journal articles indexing the case.",
            source="cdm", source_uri="case-law_article_journal_related", cardinality="multi", sector_affinity="case_law",

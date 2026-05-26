@@ -30,16 +30,25 @@ warnings.filterwarnings("ignore")
 
 
 def _format_value(values):
-    """Collapse a list of triple objects into a single CSV-friendly cell."""
+    """Collapse a list of triple objects into a single CSV-friendly cell.
+
+    Deduplicates values while preserving first-seen order. When one ECLI
+    aggregates multiple works (judgment + summary + opinion), the SPARQL
+    flatten can produce ``["Judgment", "Judgment", "Summary"]`` — without
+    dedup that becomes ``"Judgment;Judgment;Summary"`` in the cell. Dedup
+    yields the cleaner ``"Judgment;Summary"``.
+    """
     if values is None:
         return ""
     if not isinstance(values, list):
         return str(values).strip()
+    seen = set()
     out = []
     for v in values:
         s = str(v).strip()
-        if s == "":
+        if s == "" or s in seen:
             continue
+        seen.add(s)
         out.append(s)
     return ";".join(out)
 
