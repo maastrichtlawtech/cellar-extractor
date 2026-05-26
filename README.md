@@ -352,7 +352,7 @@ These are the upstream systems the extractor relies on.
 | CELLAR REST `https://publications.europa.eu/resource/celex/{CELEX}` (with `Accept: application/xhtml+xml`) | sector 3 legislation and sector 0 consolidated XHTML |
 | EUR-Lex SOAP `https://eur-lex.europa.eu/EURLexWebService?wsdl` | legacy redundancy tests only |
 
-## Tests
+## Testing
 
 ### Fast Local Suite
 

@@ -278,10 +278,10 @@ def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path)
         threads=3,
     )
 
-    assert str(called["metadata_output_path"]).endswith(
+    assert str(called["metadata_output_path"]).replace("\\", "/").endswith(
         "data/cellar_extra_2025-01-01_2025-01-02T00_00_00.csv"
     )
-    assert str(called["fulltext_output_path"]).endswith(
+    assert str(called["fulltext_output_path"]).replace("\\", "/").endswith(
         "data/cellar_extra_2025-01-01_2025-01-02T00_00_00_fulltext.json"
     )
     assert called["threads"] == 3

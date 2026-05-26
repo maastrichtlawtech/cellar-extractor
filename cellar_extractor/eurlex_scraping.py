@@ -150,7 +150,9 @@ def _get_http_session():
     session = getattr(_thread_local, "http_session", None)
     if session is None:
         session = requests.Session()
-        adapter = HTTPAdapter(pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE)
+        adapter = HTTPAdapter(
+            pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE
+        )
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         _thread_local.http_session = session
@@ -271,7 +273,11 @@ def _extract_item_payload(item_url, format_hint):
     hinted = (format_hint or "").lower()
     content_type = str(response.headers.get("content-type", "")).lower()
 
-    if hinted in {"xhtml", "html", "xml"} or "html" in content_type or "xml" in content_type:
+    if (
+        hinted in {"xhtml", "html", "xml"}
+        or "html" in content_type
+        or "xml" in content_type
+    ):
         raw_markup = response.text
         return get_full_text_from_html(raw_markup).strip(), raw_markup, hinted or "html"
     if hinted in {"pdf", "pdfa2a"} or "pdf" in content_type:
@@ -284,7 +290,9 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
         return None
 
     format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
-    filtered = [candidate for candidate in candidates if candidate.get("format") in format_order]
+    filtered = [
+        candidate for candidate in candidates if candidate.get("format") in format_order
+    ]
     if len(filtered) == 0:
         return None
 
@@ -336,7 +344,11 @@ def _fetch_sector8_summary_work_uris(work_uri):
     """
     ret = _query_cellar_sparql(query)
     rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
-    return [row.get("summary", {}).get("value", "") for row in rows if row.get("summary", {}).get("value", "") != ""]
+    return [
+        row.get("summary", {}).get("value", "")
+        for row in rows
+        if row.get("summary", {}).get("value", "") != ""
+    ]
 
 
 def _fetch_sector8_items_for_work(work_uri):
@@ -417,13 +429,19 @@ def _get_case_data_sector8(celex, language="EN"):
         eurovoc = keywords
 
         main_candidates = _fetch_sector8_items_for_work(work_uri)
-        best_main = _choose_best_sector8_item(main_candidates, language=language, summary=False)
+        best_main = _choose_best_sector8_item(
+            main_candidates, language=language, summary=False
+        )
         if best_main is not None:
             main_text, main_markup, normalized_format = _extract_item_payload(
                 best_main["item_url"], best_main["format"]
             )
             text = main_text
-            html = main_markup if main_markup != "" else (f"<pre>{main_text}</pre>" if main_text != "" else "")
+            html = (
+                main_markup
+                if main_markup != ""
+                else (f"<pre>{main_text}</pre>" if main_text != "" else "")
+            )
             text_source = "CELLAR_ITEM"
             text_language = best_main.get("language", "")
             text_format = normalized_format or best_main.get("format", "")
@@ -431,7 +449,9 @@ def _get_case_data_sector8(celex, language="EN"):
         summary_candidates = []
         for summary_work in _fetch_sector8_summary_work_uris(work_uri):
             summary_candidates.extend(_fetch_sector8_items_for_work(summary_work))
-        best_summary = _choose_best_sector8_item(summary_candidates, language=language, summary=True)
+        best_summary = _choose_best_sector8_item(
+            summary_candidates, language=language, summary=True
+        )
         if best_summary is not None:
             summary_text, _, _ = _extract_item_payload(
                 best_summary["item_url"], best_summary["format"]
@@ -513,7 +533,9 @@ def _extract_summary_from_documents(doc_hits, language="en"):
     candidates = []
     for hit in doc_hits or []:
         content = hit.get("content", {}) if isinstance(hit, dict) else {}
-        summary_text = _extract_text_by_language(content.get("contentML"), language=language)
+        summary_text = _extract_text_by_language(
+            content.get("contentML"), language=language
+        )
         if summary_text == "":
             continue
         summary_lower = summary_text.lower()
@@ -751,9 +773,7 @@ def _get_case_data_sector6(celex, language="EN"):
     root_hit = hits[0]
     root_content = root_hit.get("content", {}) if isinstance(root_hit, dict) else {}
     documents = (
-        root_hit.get("innerHits", {})
-        .get("document", {})
-        .get("searchHits", [])
+        root_hit.get("innerHits", {}).get("document", {}).get("searchHits", [])
         if isinstance(root_hit, dict)
         else []
     )

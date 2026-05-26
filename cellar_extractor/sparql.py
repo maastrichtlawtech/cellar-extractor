@@ -76,7 +76,9 @@ def _build_citation_relations_query(celexes, cites_depth=1, cited_depth=1):
         SELECT DISTINCT * WHERE {
             %s
         }
-    """ % " UNION ".join("{%s}" % subquery for subquery in subqueries)
+    """ % " UNION ".join(
+        "{%s}" % subquery for subquery in subqueries
+    )
 
 
 def _build_citation_query(source_celex, cites_depth, cited_depth):
@@ -117,7 +119,9 @@ def _build_citation_query(source_celex, cites_depth, cited_depth):
         SELECT DISTINCT * WHERE {
             %s
         }
-    """ % " UNION ".join("{%s}" % subquery for subquery in subqueries)
+    """ % " UNION ".join(
+        "{%s}" % subquery for subquery in subqueries
+    )
 
 
 def _extract_citation_targets(result):
