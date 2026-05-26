@@ -119,6 +119,114 @@ def test_add_citations_separate_handles_duplicate_input_celexes(monkeypatch):
     assert data.loc[2, "cited_by"] == "Y"
 
 
+# ---------------------------------------------------------------------------
+# `work_cites_work` URI→CELEX rewrite (HF dataset usability fix)
+# ---------------------------------------------------------------------------
+# The metadata fetch populates ``work_cites_work`` with raw CELLAR URIs
+# (``http://publications.europa.eu/resource/cellar/<uuid>``). After
+# ``add_citations_separate`` runs, we already have the URI→CELEX mapping in
+# hand (it's what builds the ``citing`` column), so the public
+# ``work_cites_work`` column should be rewritten to the CELEX form rather
+# than leaving raw URIs in the published CSV. Otherwise the citation graph
+# isn't joinable in-place against the rest of the dataset (the HF dataset's
+# ``cases.parquet`` cannot be self-joined without an external resolver
+# step). See the dataset-card "known quirks" section for context.
+
+
+def test_add_citations_separate_rewrites_work_cites_work_to_celex_form(monkeypatch):
+    """The raw URIs must be replaced with the resolved CELEX values."""
+    data = pd.DataFrame({
+        "celex": ["A"],
+        "work_cites_work": ["http://uri/x;http://uri/y"],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={"http://uri/x": "X", "http://uri/y": "Y"},
+        get_cited_csv="celex,citedD\nA,Z\n",
+    )
+
+    citations_adder.add_citations_separate(data, threads=1)
+
+    cell = data.loc[0, "work_cites_work"]
+    # No raw URI should leak through after the rewrite.
+    assert "http://" not in str(cell), f"work_cites_work still contains URIs: {cell!r}"
+    assert set(str(cell).split(";")) == {"X", "Y"}
+
+
+def test_add_citations_separate_drops_unresolvable_uris_from_work_cites_work(monkeypatch):
+    """URIs the SPARQL endpoint can't map to CELEX are dropped from the
+    rewritten column, matching the existing behaviour of the ``citing``
+    derivation. The corresponding ``citing`` cell must agree."""
+    data = pd.DataFrame({
+        "celex": ["A"],
+        "work_cites_work": ["http://uri/known;http://uri/unknown;http://uri/known2"],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={
+            "http://uri/known": "K1",
+            "http://uri/known2": "K2",
+            # http://uri/unknown deliberately absent
+        },
+        get_cited_csv="celex,citedD\n",
+    )
+
+    citations_adder.add_citations_separate(data, threads=1)
+
+    assert data.loc[0, "work_cites_work"] == "K1;K2"
+    assert data.loc[0, "citing"] == "K1;K2"
+
+
+def test_add_citations_separate_work_cites_work_equals_citing_after_run(monkeypatch):
+    """Post-run invariant: ``work_cites_work`` and ``citing`` carry the same
+    CELEX content. The two columns are now mutually consistent — pick either
+    one for outbound-graph analytics."""
+    data = pd.DataFrame({
+        "celex": ["A", "B", "C"],
+        "work_cites_work": [
+            "http://uri/a1;http://uri/a2",
+            "",
+            "http://uri/c1",
+        ],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={
+            "http://uri/a1": "A1",
+            "http://uri/a2": "A2",
+            "http://uri/c1": "C1",
+        },
+        get_cited_csv="celex,citedD\n",
+    )
+
+    citations_adder.add_citations_separate(data, threads=1)
+
+    for idx in range(len(data)):
+        assert data.loc[idx, "work_cites_work"] == data.loc[idx, "citing"], (
+            f"row {idx}: work_cites_work={data.loc[idx,'work_cites_work']!r} "
+            f"!= citing={data.loc[idx,'citing']!r}"
+        )
+
+
+def test_add_citations_separate_empty_work_cites_work_stays_empty(monkeypatch):
+    """A row with no outbound URIs must end up with an empty CELEX list,
+    not a stray URI artifact."""
+    data = pd.DataFrame({
+        "celex": ["A"],
+        "work_cites_work": [""],
+    })
+    _patch_citation_sources(
+        monkeypatch,
+        uri_to_celex={},
+        get_cited_csv="celex,citedD\n",
+    )
+
+    citations_adder.add_citations_separate(data, threads=1)
+
+    assert data.loc[0, "work_cites_work"] == ""
+    assert data.loc[0, "citing"] == ""
+
+
 def test_add_citations_separate_webservice_warns_on_use(monkeypatch):
     data = pd.DataFrame({"celex": ["62019CJ0668"]})
 
