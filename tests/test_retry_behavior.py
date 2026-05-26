@@ -16,6 +16,9 @@ class _AlwaysFailSparql:
     def setQuery(self, *_args, **_kwargs):
         return None
 
+    def setTimeout(self, *_args, **_kwargs):
+        return None
+
     def queryAndConvert(self):
         raise RuntimeError("temporary failure")
 

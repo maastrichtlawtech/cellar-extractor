@@ -119,7 +119,7 @@ def execute_sections_threads(
             case_codes[row_index] = infocuria_data.get("directory_codes", "")
             adv_general[row_index] = infocuria_data.get("advocate", "")
             affecting_id[row_index] = infocuria_data.get("affecting_ids", "")
-            affecting_str[row_index] = infocuria_data.get("affecting_strings", "")
+            affecting_str[row_index] = infocuria_data.get("affecting_string", "")
             judge_rapporteur[row_index] = infocuria_data.get("judge", "")
             citations_extra[row_index] = infocuria_data.get("citations_extra", "")
             fulltext_source[row_index] = text_source_value
@@ -236,8 +236,8 @@ def add_sections(
     and `fulltext_output_path` parameters are kept as deprecated aliases.
     """
     source_indices = data.index.tolist()
-    celex = data.loc[:, "CELEX IDENTIFIER"].reset_index(drop=True)
-    eclis = data.loc[:, "ECLI"].reset_index(drop=True)
+    celex = data.loc[:, "celex"].reset_index(drop=True)
+    eclis = data.loc[:, "ecli"].reset_index(drop=True)
     length = celex.size
     time.sleep(1)
     _bar = tqdm(
@@ -295,14 +295,14 @@ def add_sections(
         t.start()
     for t in threads:
         t.join()
-    add_column_frow_list(data, "celex_summary", list_sum)
-    add_column_frow_list(data, "celex_keywords", list_key)
-    add_column_frow_list(data, "celex_eurovoc", list_eurovoc)
-    add_column_frow_list(data, "celex_directory_codes", list_codes)
+    add_column_frow_list(data, "summary", list_sum)
+    add_column_frow_list(data, "keywords", list_key)
+    add_column_frow_list(data, "eurovoc", list_eurovoc)
+    add_column_frow_list(data, "directory_codes", list_codes)
     add_column_frow_list(data, "advocate_general", list_adv)
     add_column_frow_list(data, "judge_rapporteur", list_judge)
     add_column_frow_list(data, "affecting_ids", list_affecting_id)
-    add_column_frow_list(data, "affecting_strings", list_affecting_str)
+    add_column_frow_list(data, "affecting_string", list_affecting_str)
     add_column_frow_list(data, "citations_extra_info", list_citations_extra)
     add_column_frow_list(data, "fulltext_source", list_fulltext_source)
     add_column_frow_list(data, "summary_source", list_summary_source)
@@ -334,11 +334,17 @@ def add_sections(
 
 
 def add_column_frow_list(data, name, list):
-    """
-    Used for adding columns easier to a dataframe for add_sections().
+    """Add or replace a column on the enriched dataframe.
+
+    The canonical schema in cellar_extractor.schema pre-populates the row with
+    every contracted column (filled with None), so by the time enrichment
+    runs the column may already exist. Drop it first then insert so we always
+    write enrichment values without colliding.
     """
     column = pd.Series([], dtype="string")
     for _item in list:
         column = pd.concat([column, _item])
     column.sort_index(inplace=True)
+    if name in data.columns:
+        data.drop(columns=[name], inplace=True)
     data.insert(1, name, column)

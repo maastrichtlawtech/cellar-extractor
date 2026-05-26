@@ -7,12 +7,16 @@ class _FakeSparql:
     def __init__(self, payload):
         self.payload = payload
         self.query = ""
+        self.timeout = None
 
     def setReturnFormat(self, *_args, **_kwargs):
         return None
 
     def setQuery(self, query):
         self.query = query
+
+    def setTimeout(self, seconds):
+        self.timeout = seconds
 
     def queryAndConvert(self):
         return self.payload
@@ -34,8 +38,9 @@ def test_get_citations_omits_reverse_branch_when_cited_depth_zero(monkeypatch):
     result = sparql.get_citations("62000CJ0003", cites_depth=1, cited_depth=0)
 
     assert result == {"62000CJ0001", "62000CJ0002"}
-    assert "?doc cdm:work_cites_work{1,1} ?cited" in fake.query
-    assert "?cited cdm:work_cites_work" not in fake.query
+    assert "?doc cdm:work_cites_work ?cited" in fake.query
+    assert "{1," not in fake.query
+    assert "?cited cdm:work_cites_work ?doc" not in fake.query
     assert "UNION" not in fake.query
 
 

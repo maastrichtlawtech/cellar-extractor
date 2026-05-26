@@ -55,7 +55,7 @@ def _raw_count_query(celex, relation):
 
 @pytest.fixture(scope="module")
 def citation_df():
-    df = pd.DataFrame({"CELEX IDENTIFIER": SAMPLE_CELEXES})
+    df = pd.DataFrame({"celex": SAMPLE_CELEXES})
     add_citations_separate(df, threads=1)
     return df
 
@@ -120,7 +120,7 @@ def test_live_local_edges_match_single_source_outbound_queries(citation_df):
 
 def test_live_duplicate_celex_rows_preserve_identical_citation_relations():
     duplicated = ["62019CJ0668", "62019CJ0668", "62024CJ0131"]
-    df = pd.DataFrame({"CELEX IDENTIFIER": duplicated})
+    df = pd.DataFrame({"celex": duplicated})
 
     add_citations_separate(df, threads=3)
 

@@ -135,6 +135,9 @@ data/
 *.json
 !tests/*.txt
 
+# Live integration test sample dumps
+tests/out/
+
 # IDE
 .vscode/
 .idea/

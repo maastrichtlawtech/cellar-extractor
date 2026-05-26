@@ -198,7 +198,7 @@ def filter_subject_matter(df=None, phrase=None):
     else:
         try:
             mask = (
-                df["LEGAL RESOURCE IS ABOUT SUBJECT MATTER"]
+                df["subject_matter"]
                 .str.lower()
                 .str.contains(phrase.lower(), na=False)
             )

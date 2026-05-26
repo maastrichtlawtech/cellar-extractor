@@ -24,6 +24,7 @@ INFOCURIA_BLOB_HTML = (
     + "/blob/download-file-html/{jurisdiction}/{year}/{process}/{file_name}"
 )
 CELLAR_SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
+CELLAR_REST_BASE = "https://publications.europa.eu/resource/celex"
 HTTP_POOL_SIZE = 8
 INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
 
@@ -87,8 +88,22 @@ Method for detecting code-words for case law directory codes for cellar.
 """
 
 _thread_local = threading.local()
-_rate_limit_lock = threading.Lock()
+# Per-bucket locks let independent endpoints (InfoCuria suggest, blob-html,
+# CELLAR REST, etc.) pace in parallel rather than serialising on a single
+# global mutex. The guard lock only protects the registry, never the sleep.
+_bucket_locks_guard = threading.Lock()
+_bucket_locks = {}
 _last_request_at = {}
+
+
+def _bucket_lock(bucket):
+    """Return the lock dedicated to ``bucket``, creating it on first use."""
+    with _bucket_locks_guard:
+        lock = _bucket_locks.get(bucket)
+        if lock is None:
+            lock = threading.Lock()
+            _bucket_locks[bucket] = lock
+        return lock
 
 
 def _normalize_celex(celex):
@@ -109,14 +124,26 @@ def _sleep_with_backoff(attempt, base=0.2):
 
 
 def _pace_requests(bucket, min_interval):
-    with _rate_limit_lock:
+    """Throttle requests to ``bucket`` so consecutive calls are at least
+    ``min_interval`` apart, **without serialising across buckets** and
+    **without holding any lock while sleeping**.
+
+    The bucket's slot is reserved atomically inside the lock (so concurrent
+    same-bucket waiters queue up correctly), then the sleep happens with no
+    lock held — letting other threads on other buckets proceed in parallel.
+    """
+    lock = _bucket_lock(bucket)
+    with lock:
         now = time.monotonic()
         last = _last_request_at.get(bucket, 0.0)
         wait = min_interval - (now - last)
-        if wait > 0:
-            time.sleep(wait)
-            now = time.monotonic()
-        _last_request_at[bucket] = now
+        # Reserve the next slot atomically. If the previous slot is in the
+        # future (because a concurrent waiter already reserved it), our wait
+        # extends to one min_interval past that.
+        next_slot = max(now, last + min_interval)
+        _last_request_at[bucket] = next_slot
+    if wait > 0:
+        time.sleep(wait)
 
 
 def _get_http_session():
@@ -162,6 +189,9 @@ def _post_json(url, payload, retries=3):
     return None
 
 
+SPARQL_REQUEST_TIMEOUT_SECONDS = 30
+
+
 def _query_cellar_sparql(query, retries=3):
     last_error = None
     for attempt in range(retries):
@@ -169,6 +199,7 @@ def _query_cellar_sparql(query, retries=3):
             sparql = SPARQLWrapper(CELLAR_SPARQL_ENDPOINT)
             sparql.setReturnFormat(JSON)
             sparql.setMethod(POST)
+            sparql.setTimeout(SPARQL_REQUEST_TIMEOUT_SECONDS)
             sparql.setQuery(query)
             return sparql.queryAndConvert()
         except Exception as exc:
@@ -441,7 +472,7 @@ def _get_case_data_sector8(celex, language="EN"):
         "advocate": "",
         "judge": "",
         "affecting_ids": "",
-        "affecting_strings": "",
+        "affecting_string": "",
         "citations_extra": "",
         "text_source": text_source,
         "text_language": text_language,
@@ -535,22 +566,63 @@ def _resolve_name_by_code(code, entries, language="en"):
     return ";".join(labels)
 
 
-def _collect_affecting_ids(content):
-    fields = [
-        "joinAffairs",
-        "pourvoiAffIds",
-        "originPourvoiIds",
-        "reExamenAffIds",
-        "originReExamanIds",
-        "transfertAffIds",
-        "originTransfertIds",
-    ]
+_AFFECTING_FIELDS = (
+    ("joinAffairs", "joined"),
+    ("pourvoiAffIds", "appeal_against"),
+    ("originPourvoiIds", "appealed_in"),
+    ("reExamenAffIds", "re-examines"),
+    ("originReExamanIds", "re-examined_in"),
+    ("transfertAffIds", "transfers"),
+    ("originTransfertIds", "transferred_from"),
+)
+
+
+def _split_affecting_entry(entry):
+    """Return (raw_internal_id, published_id) from an InfoCuria affecting entry.
+
+    Entries look like ``C/0073/24/00000000RP/01/P/01#C-73/24`` — the part
+    after ``#`` is the human-readable published case number; the part before
+    is InfoCuria's internal procedure id. We surface the clean published id
+    in ``affecting_ids`` and the longer descriptive form in ``affecting_string``.
+    """
+    raw = str(entry).strip()
+    if raw == "":
+        return "", ""
+    if "#" in raw:
+        internal, published = raw.split("#", 1)
+        return internal.strip(), published.strip()
+    return raw, raw
+
+
+def _collect_affecting(content):
+    """Return (affecting_ids, affecting_string) from an InfoCuria result hit.
+
+    - ``affecting_ids``: ``;``-joined list of published case numbers (e.g. ``C-73/24``).
+    - ``affecting_string``: ``;``-joined descriptive entries prefixed with the
+      relation kind (e.g. ``joined: C-73/24``).
+    """
     ids = []
-    for field in fields:
+    strings = []
+    for field, relation in _AFFECTING_FIELDS:
         vals = content.get(field)
-        if isinstance(vals, list):
-            ids.extend([str(val).strip() for val in vals if str(val).strip() != ""])
-    return ";".join(list(dict.fromkeys(ids)))
+        if not isinstance(vals, list):
+            continue
+        for entry in vals:
+            _, published = _split_affecting_entry(entry)
+            if published == "":
+                continue
+            if published not in ids:
+                ids.append(published)
+            descriptive = f"{relation}: {published}"
+            if descriptive not in strings:
+                strings.append(descriptive)
+    return ";".join(ids), ";".join(strings)
+
+
+def _collect_affecting_ids(content):
+    """Backwards-compat alias returning only the IDs side of _collect_affecting."""
+    ids, _ = _collect_affecting(content)
+    return ids
 
 
 def _choose_best_document(doc_hits, language="EN"):
@@ -579,6 +651,79 @@ def _choose_best_document(doc_hits, language="EN"):
         return (lang_match, priority)
 
     return sorted(candidates, key=_rank)[0]
+
+
+def _fetch_sector3_xhtml(celex, language="EN"):
+    url = f"{CELLAR_REST_BASE}/{celex}"
+    auth_lang = (_short_lang_to_authority(language) or "ENG").lower()
+    session = _get_http_session()
+    last_error = None
+    for attempt in range(3):
+        try:
+            _pace_requests("cellar_rest_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+            response = session.get(
+                url,
+                headers={
+                    "Accept": "application/xhtml+xml",
+                    "Accept-Language": auth_lang,
+                },
+                timeout=60,
+            )
+        except Exception as exc:
+            last_error = exc
+            _sleep_with_backoff(attempt)
+            continue
+        if response.status_code == 200:
+            return response.text, response.headers.get("Content-Language", auth_lang)
+        if response.status_code == 404:
+            return "", ""
+        _sleep_with_backoff(attempt)
+    if last_error:
+        return "", ""
+    return "", ""
+
+
+def _get_case_data_sector3(celex, language="EN"):
+    xhtml, content_lang = _fetch_sector3_xhtml(celex, language=language)
+    text = ""
+    html = ""
+    text_source = ""
+    text_language = ""
+    text_format = ""
+    if xhtml != "":
+        text = get_full_text_from_html(xhtml).strip()
+        html = xhtml
+        text_source = "CELLAR_REST_XHTML"
+        primary_tag = (content_lang or "").split(",")[0].split("-")[0].upper()
+        if len(primary_tag) == 3:
+            short = _authority_lang_to_short(primary_tag)
+        elif len(primary_tag) == 2:
+            short = primary_tag
+        else:
+            short = ""
+        text_language = short or language.upper()
+        text_format = "xhtml"
+    sector_tag = celex[:1] if celex and celex[:1] in {"0", "3"} else "3"
+    return {
+        "html": html,
+        "text": text,
+        "summary": "",
+        "keywords": "",
+        "directory_codes": "",
+        "eurovoc": "",
+        "advocate": "",
+        "judge": "",
+        "affecting_ids": "",
+        "affecting_string": "",
+        "citations_extra": "",
+        "text_source": text_source,
+        "text_language": text_language,
+        "text_format": text_format,
+        "summary_source": "",
+        "summary_language": "",
+        "sector": sector_tag,
+        "missing_reasons": _build_missing_reasons(text=text, summary=""),
+    }
 
 
 def _get_case_data_sector6(celex, language="EN"):
@@ -673,7 +818,7 @@ def _get_case_data_sector6(celex, language="EN"):
         root_content.get("reportingJudgeML"),
         language="en",
     )
-    affecting_ids = _collect_affecting_ids(root_content)
+    affecting_ids, affecting_string = _collect_affecting(root_content)
     result_labels = ";".join(
         _extract_labels(root_content.get("procedureResultTypeML"), language="en")
     )
@@ -698,7 +843,7 @@ def _get_case_data_sector6(celex, language="EN"):
         "advocate": advocate,
         "judge": judge,
         "affecting_ids": affecting_ids,
-        "affecting_strings": affecting_ids,
+        "affecting_string": affecting_string,
         "citations_extra": citations_extra,
         "text_source": "INFOCURIA_BLOB_HTML" if text != "" else "",
         "text_language": str(doc_lang).upper() if doc_lang else language.upper(),
@@ -719,6 +864,8 @@ def _get_case_data_cached(celex, language="EN"):
         return _get_case_data_sector6(normalized, language=language)
     if normalized.startswith("8"):
         return _get_case_data_sector8(normalized, language=language)
+    if normalized.startswith("3") or normalized.startswith("0"):
+        return _get_case_data_sector3(normalized, language=language)
     return None
 
 
@@ -730,6 +877,10 @@ def get_case_data_by_celex_id(celex, language="EN"):
         return _get_case_data_cached(normalized, language=language.upper())
     except Exception:
         return None
+
+
+def get_legislation_by_celex_id(celex, language="EN"):
+    return get_case_data_by_celex_id(celex, language=language)
 
 
 def is_code(word):
@@ -938,21 +1089,27 @@ def get_full_text_from_html(html_text):
     It has different cases depending on the first character of the CELEX ID.
     Universal method, also replaces all "," with "_".
     """
-    # This method turns the html code from the summary page into text
-    # It has different cases depending on the first character of the CELEX ID
-    # Should only be used for summaries extraction
+    # Comma-to-underscore is preserved here for backwards compatibility with
+    # the CSV-flattened pipeline. New consumers that need faithful plain text
+    # should use get_clean_text_from_html instead.
+    text = get_clean_text_from_html(html_text)
+    return text.replace(",", "_")
+
+
+def get_clean_text_from_html(html_text):
+    """Plain-text rendering of HTML/XHTML markup, preserving commas.
+
+    Same line/whitespace normalization as get_full_text_from_html, but without
+    the legacy comma-to-underscore substitution. Suitable for downstream
+    platforms that consume natural-language text directly.
+    """
     soup = BeautifulSoup(html_text, "html.parser")
-    for script in soup(["script", "style"]):
-        script.extract()  # rip it out
+    for tag in soup(["script", "style"]):
+        tag.extract()
     text = soup.get_text()
-    # break into lines and remove leading and trailing space on each
     lines = (line.strip() for line in text.splitlines())
-    # break multi-headlines into a line each
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    # drop blank lines
-    text = "\n".join(chunk for chunk in chunks if chunk)
-    text = text.replace(",", "_")
-    return text
+    return "\n".join(chunk for chunk in chunks if chunk)
 
 
 def get_html_text_by_celex_id(id):
@@ -984,7 +1141,7 @@ def get_entire_page(celex):
     directory_codes = info.get("directory_codes", "")
     advocate = info.get("advocate", "")
     judge = info.get("judge", "")
-    affecting_strings = info.get("affecting_strings", "")
+    affecting_strings = info.get("affecting_string", "")
     citations_extra = info.get("citations_extra", "")
 
     return (

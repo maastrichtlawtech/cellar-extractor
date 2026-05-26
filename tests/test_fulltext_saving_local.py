@@ -45,8 +45,8 @@ def test_add_sections_supports_non_default_index(monkeypatch):
     _mock_scrapers(monkeypatch)
     data = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["62000CJ0001", "62000CJ0002", "62000CJ0003"],
-            "ECLI": ["E1", "E2", "E3"],
+            "celex": ["62000CJ0001", "62000CJ0002", "62000CJ0003"],
+            "ecli": ["E1", "E2", "E3"],
         },
         index=[10, 11, 12],
     )
@@ -54,16 +54,16 @@ def test_add_sections_supports_non_default_index(monkeypatch):
     fulltext = fulltext_saving.add_sections(data, threads=2)
 
     assert len(fulltext) == 3
-    assert set(data["celex_summary"].dropna().unique()) == {"summary"}
-    assert set(data["celex_keywords"].dropna().unique()) == {"kw1;kw2"}
+    assert set(data["summary"].dropna().unique()) == {"summary"}
+    assert set(data["keywords"].dropna().unique()) == {"kw1;kw2"}
 
 
 def test_add_sections_writes_valid_json_file_with_multiple_threads(monkeypatch, tmp_path):
     _mock_scrapers(monkeypatch)
     data = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": [f"62000CJ{i:04d}" for i in range(12)],
-            "ECLI": [f"E{i}" for i in range(12)],
+            "celex": [f"62000CJ{i:04d}" for i in range(12)],
+            "ecli": [f"E{i}" for i in range(12)],
         }
     )
     output_file = tmp_path / "fulltext.json"
@@ -79,8 +79,8 @@ def test_add_sections_in_memory_does_not_create_files(monkeypatch, tmp_path):
     _mock_scrapers(monkeypatch)
     data = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["62000CJ0001"],
-            "ECLI": ["E1"],
+            "celex": ["62000CJ0001"],
+            "ecli": ["E1"],
         }
     )
 
@@ -94,8 +94,8 @@ def test_add_sections_json_filepath_alias_warns_and_writes(monkeypatch, tmp_path
     _mock_scrapers(monkeypatch)
     data = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["62000CJ0001"],
-            "ECLI": ["E1"],
+            "celex": ["62000CJ0001"],
+            "ecli": ["E1"],
         }
     )
     output_file = tmp_path / "nested" / "fulltext.json"
@@ -120,18 +120,18 @@ def test_add_sections_marks_missing_reasons_for_empty_infocuria_fields(monkeypat
             "advocate": "",
             "judge": "",
             "affecting_ids": "",
-            "affecting_strings": "",
+            "affecting_string": "",
             "citations_extra": "",
             "text_source": "",
             "summary_source": "",
             "missing_reasons": "UNAVAILABLE_UPSTREAM",
         },
     )
-    data = pd.DataFrame({"CELEX IDENTIFIER": ["82010AT0127(51)"], "ECLI": ["E1"]})
+    data = pd.DataFrame({"celex": ["82010AT0127(51)"], "ecli": ["E1"]})
 
     fulltext = fulltext_saving.add_sections(data, threads=1)
 
-    assert data.loc[0, "celex_summary"] == ""
+    assert data.loc[0, "summary"] == ""
     reasons = data.loc[0, "missing_reasons"]
     assert "FULLTEXT_UNAVAILABLE_UPSTREAM" in reasons
     assert "SUMMARY_UNAVAILABLE_UPSTREAM" in reasons
