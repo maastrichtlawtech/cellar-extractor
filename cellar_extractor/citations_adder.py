@@ -354,6 +354,14 @@ def _derive_citing_from_work_cites_work(data):
     Coverage of this path is bounded by ``work_cites_work`` presence in the
     metadata fetch — typically >95% of sector-6 rows — instead of the
     20% the previous implementation managed when the endpoint was healthy.
+
+    *Side effect*: rewrites the source ``work_cites_work`` column in place
+    to carry the resolved CELEX values too. The raw CELLAR URIs the SPARQL
+    flatten emits aren't useful in the published CSV — they can't be joined
+    against any other column without a separate resolver pass — so we
+    promote the column to CELEX-form here. The returned ``citing`` Series
+    and the rewritten ``work_cites_work`` column carry identical content
+    after this call.
     """
     column_candidates = ("work_cites_work", "WORK CITES WORK. CI / CJ")
     column = next((c for c in column_candidates if c in data.columns), None)
@@ -373,6 +381,7 @@ def _derive_citing_from_work_cites_work(data):
     uri_to_celex = resolve_celexes_for_cellar_uris(sorted(all_uris))
 
     out = pd.Series(index=data.index, dtype="string")
+    rewritten = pd.Series(index=data.index, dtype="string")
     for (idx, _), uris in zip(data.iterrows(), cited_uris_per_row):
         celexes = []
         seen = set()
@@ -381,8 +390,15 @@ def _derive_citing_from_work_cites_work(data):
             if celex and celex not in seen:
                 seen.add(celex)
                 celexes.append(celex)
-        out[idx] = ";".join(celexes)
+        joined = ";".join(celexes)
+        out[idx] = joined
+        rewritten[idx] = joined
     out.sort_index(inplace=True)
+    rewritten.sort_index(inplace=True)
+    # Promote the source column to CELEX form. The downstream CSV / parquet
+    # writers serialize whatever ``data`` carries, so this is what makes the
+    # public dataset self-joinable.
+    data[column] = rewritten
     return out
 
 

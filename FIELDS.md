@@ -207,7 +207,7 @@ CDM predicates the package surfaces opportunistically — they appear on a given
 | `opinion_advocate_general_joined_to_case_court` | url | multi | 12 | — | `opinion_advocate-general_joined_to_case_court` | Reverse link from an Opinion document back to its case. |
 | `summary_summarizes_work` | url | single | 50 | — | `summary_summarizes_work` | When the document is a SUMMARY of another work, points at that work. |
 | `summary_case_law_id_celex` | string | single | 50 | — | `summary_case-law_id_celex` | Alternate case-law identifier reference. |
-| `work_cites_work` | url | multi | 59 | 100 | `work_cites_work` | Raw CELLAR-resource URIs of cited works (see canonical `citing` for CELEX-resolved form). |
+| `work_cites_work` | string | multi | 59 | 100 | `work_cites_work` | CELEX ids of cited works. Rewritten in place by `add_citations_separate` from the raw CELLAR URIs the SPARQL flatten emits — content matches the canonical `citing` column after enrichment. |
 | `work_created_by_agent` | string | multi | 100 | 100 | `work_created_by_agent` | Authoring agents (`Court of Justice`, `European Parliament`, …). |
 | `work_part_of_dossier` | url | single | 64 | 47 | `work_part_of_dossier` | Dossier the work belongs to (groups Opinion + Judgment + Order of one case). |
 | `work_part_of_event` | url | single | 64 | — | `work_part_of_event` | CELLAR event grouping. |
