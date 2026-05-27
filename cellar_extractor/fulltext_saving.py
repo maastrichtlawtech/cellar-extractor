@@ -24,6 +24,71 @@ from tqdm import tqdm
 MAX_FULLTEXT_WORKERS = 6
 
 
+def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
+    """Convert one CELEX's ``get_case_data_by_celex_id`` result into a list
+    of JSON-ready records, one per language.
+
+    * If ``infocuria_data["fulltexts"]`` is present and non-empty, emit one
+      record per language entry.
+    * If the list exists but is empty (the case had no recoverable body in
+      any language), emit a single placeholder record so the ECLI is still
+      represented in ``fulltexts.parquet`` (carries the missing-reasons trail).
+    * If no ``fulltexts`` list is present at all (legacy single-language
+      handlers, test stubs, etc.), fall back to the top-level
+      ``text`` / ``text_source`` / ``text_language`` / ``text_format`` fields —
+      backwards-compatible.
+
+    Each output record has the shape::
+
+        {celex, ecli, text, text_source, text_language, text_format,
+         missing_reasons}
+
+    """
+    if not isinstance(infocuria_data, dict):
+        return []
+
+    fulltexts = infocuria_data.get("fulltexts")
+    if fulltexts is None:
+        # Legacy single-language shape.
+        return [{
+            "celex": str(celex),
+            "ecli": ecli,
+            "text": infocuria_data.get("text", ""),
+            "text_source": infocuria_data.get("text_source", ""),
+            "text_language": infocuria_data.get("text_language", ""),
+            "text_format": infocuria_data.get("text_format", ""),
+            "missing_reasons": missing_reasons_value,
+        }]
+
+    if not fulltexts:
+        # Multi-language shape but empty — emit a single placeholder so the
+        # ECLI doesn't silently disappear from the fulltexts output.
+        return [{
+            "celex": str(celex),
+            "ecli": ecli,
+            "text": "",
+            "text_source": "",
+            "text_language": "",
+            "text_format": "",
+            "missing_reasons": missing_reasons_value,
+        }]
+
+    out = []
+    for entry in fulltexts:
+        if not isinstance(entry, dict):
+            continue
+        out.append({
+            "celex": str(celex),
+            "ecli": ecli,
+            "text": entry.get("text", ""),
+            "text_source": entry.get("text_source", ""),
+            "text_language": entry.get("text_language", ""),
+            "text_format": entry.get("text_format", ""),
+            "missing_reasons": missing_reasons_value,
+        })
+    return out
+
+
 def execute_sections_threads(
     celex,
     eclis,
@@ -102,17 +167,24 @@ def execute_sections_threads(
                 reasons.append("UNAVAILABLE_UPSTREAM")
             reasons_value = ";".join(dict.fromkeys(reasons))
 
-            full.append(
-                {
-                    "celex": str(_id),
-                    "ecli": ecli,
-                    "text": text,
-                    "text_source": text_source_value,
-                    "text_language": infocuria_data.get("text_language", ""),
-                    "text_format": infocuria_data.get("text_format", ""),
-                    "missing_reasons": reasons_value,
-                }
-            )
+            # Multi-language fanout: if the handler populated a `fulltexts`
+            # list, emit one row per language (and stamp the same
+            # missing_reasons on every row). Otherwise fall back to the
+            # single-row legacy shape via _build_fulltext_records.
+            #
+            # Replace the chosen "primary" text with the post-fallback `text`
+            # we computed above (the legacy path applies extractor fallback
+            # extraction when the upstream text was empty) so we don't lose
+            # that behaviour for the primary entry.
+            data_for_records = dict(infocuria_data)
+            data_for_records["text_source"] = text_source_value
+            data_for_records["text"] = text
+            full.extend(_build_fulltext_records(
+                data_for_records,
+                celex=_id,
+                ecli=ecli,
+                missing_reasons_value=reasons_value,
+            ))
             key[row_index] = keyword_value
             _sum[row_index] = summary_value
             eurovocs[row_index] = infocuria_data.get("eurovoc", "")
