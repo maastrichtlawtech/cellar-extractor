@@ -285,6 +285,41 @@ def _extract_item_payload(item_url, format_hint):
     return "", "", hinted
 
 
+def _choose_best_per_language(candidates, summary=False):
+    """Return at most one best candidate per language, picking the best
+    format within each language group.
+
+    This is the multi-language analogue of :func:`_choose_best_sector8_item`.
+    Used to drive the ``fulltexts: [...]`` fanout — every language CELLAR has
+    for a work becomes one row in the output, with format precedence
+    (xhtml > html > xml > pdf for main, configurable for summaries) applied
+    within each language bucket.
+
+    Candidates with formats outside the allowed precedence list are
+    dropped. Candidates without a language tag are grouped under ``""``
+    rather than discarded — some manifestations lack
+    ``expression_uses_language`` in CELLAR.
+    """
+    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    filtered = [c for c in candidates if c.get("format") in format_order]
+    if not filtered:
+        return []
+
+    by_lang: dict = {}
+    for c in filtered:
+        lang = c.get("language", "")
+        current = by_lang.get(lang)
+        if current is None:
+            by_lang[lang] = c
+            continue
+        # Keep the one with the better (smaller) format rank.
+        current_rank = format_order.get(current.get("format", ""), 99)
+        new_rank = format_order.get(c.get("format", ""), 99)
+        if new_rank < current_rank:
+            by_lang[lang] = c
+    return list(by_lang.values())
+
+
 def _choose_best_sector8_item(candidates, language="EN", summary=False):
     if len(candidates) == 0:
         return None
@@ -419,9 +454,37 @@ def _fetch_sector8_subject_labels(work_uri, language="en"):
     return list(dict.fromkeys([label for label in labels if label != ""]))
 
 
+def _fanout_fulltexts_from_candidates(candidates, source_label):
+    """Resolve every per-language best candidate into a fulltext record.
+
+    Returns a list of dicts shaped like the ``fulltexts`` entries the
+    downstream JSON writer consumes: ``{text, text_source, text_language,
+    text_format}``. Records with empty bodies are dropped so consumers
+    don't store an extra zero-byte row per missing language.
+    """
+    out = []
+    for cand in _choose_best_per_language(candidates, summary=False):
+        text, markup, normalized_format = _extract_item_payload(
+            cand["item_url"], cand["format"]
+        )
+        if text == "":
+            continue
+        out.append({
+            "text": text,
+            "html": markup if markup != "" else (
+                f"<pre>{text}</pre>" if text != "" else ""
+            ),
+            "text_source": source_label,
+            "text_language": cand.get("language", "") or "",
+            "text_format": normalized_format or cand.get("format", ""),
+        })
+    return out
+
+
 def _get_case_data_sector8(celex, language="EN"):
     work_uri = _fetch_sector8_work_uri(celex)
 
+    fulltexts: list = []
     text = ""
     html = ""
     text_source = ""
@@ -439,22 +502,23 @@ def _get_case_data_sector8(celex, language="EN"):
         eurovoc = keywords
 
         main_candidates = _fetch_sector8_items_for_work(work_uri)
-        best_main = _choose_best_sector8_item(
-            main_candidates, language=language, summary=False
+        fulltexts = _fanout_fulltexts_from_candidates(
+            main_candidates, source_label="CELLAR_ITEM"
         )
-        if best_main is not None:
-            main_text, main_markup, normalized_format = _extract_item_payload(
-                best_main["item_url"], best_main["format"]
+        # Pick the "primary" entry for backwards-compatible top-level fields:
+        # prefer the requested language if available, else first in the list.
+        primary = None
+        if fulltexts:
+            lang_upper = (language or "").upper()
+            primary = next(
+                (f for f in fulltexts if f["text_language"].upper() == lang_upper),
+                fulltexts[0],
             )
-            text = main_text
-            html = (
-                main_markup
-                if main_markup != ""
-                else (f"<pre>{main_text}</pre>" if main_text != "" else "")
-            )
-            text_source = "CELLAR_ITEM"
-            text_language = best_main.get("language", "")
-            text_format = normalized_format or best_main.get("format", "")
+            text = primary["text"]
+            html = primary["html"]
+            text_source = primary["text_source"]
+            text_language = primary["text_language"]
+            text_format = primary["text_format"]
 
         summary_candidates = []
         for summary_work in _fetch_sector8_summary_work_uris(work_uri):
@@ -491,6 +555,7 @@ def _get_case_data_sector8(celex, language="EN"):
         "summary_language": summary_language,
         "sector": "8",
         "missing_reasons": missing_reasons,
+        "fulltexts": fulltexts,
     }
 
 
@@ -761,22 +826,26 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
         return None
 
     candidates = _fetch_sector8_items_for_work(work_uri)
-    best = _choose_best_sector8_item(candidates, language=language, summary=False)
-    if best is None:
-        return None
-
-    text, markup, normalized_format = _extract_item_payload(
-        best["item_url"], best["format"]
+    fulltexts = _fanout_fulltexts_from_candidates(
+        candidates, source_label="CELLAR_ITEM"
     )
-    if text == "":
+    if not fulltexts:
         return None
 
     keywords_list = _fetch_sector8_subject_labels(work_uri, language="en")
     keywords = ";".join(keywords_list)
 
+    # Primary entry for backwards-compatible top-level fields: prefer the
+    # requested language, else fall back to whatever is first.
+    lang_upper = (language or "").upper()
+    primary = next(
+        (f for f in fulltexts if f["text_language"].upper() == lang_upper),
+        fulltexts[0],
+    )
+
     return {
-        "html": markup if markup != "" else (f"<pre>{text}</pre>" if text != "" else ""),
-        "text": text,
+        "html": primary["html"],
+        "text": primary["text"],
         "summary": "",
         "keywords": keywords,
         "directory_codes": "",
@@ -786,13 +855,14 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
         "affecting_ids": "",
         "affecting_string": "",
         "citations_extra": "",
-        "text_source": "CELLAR_ITEM",
-        "text_language": best.get("language", "") or language.upper(),
-        "text_format": normalized_format or best.get("format", ""),
+        "text_source": primary["text_source"],
+        "text_language": primary["text_language"] or language.upper(),
+        "text_format": primary["text_format"],
         "summary_source": "",
         "summary_language": "",
         "sector": "6",
-        "missing_reasons": _build_missing_reasons(text=text, summary=""),
+        "missing_reasons": _build_missing_reasons(text=primary["text"], summary=""),
+        "fulltexts": fulltexts,
     }
 
 
@@ -905,6 +975,65 @@ def _get_case_data_sector6(celex, language="EN"):
     else:
         summary_source = ""
 
+    # Multi-language fanout: InfoCuria's `documents.searchHits` already
+    # carries every docLang variant of the procedure. Fetch each blob the
+    # same way the primary one was fetched and build a fulltexts list.
+    fulltexts: list = []
+    seen_langs: set = set()
+    session = _get_http_session()
+    for doc in documents or []:
+        if not isinstance(doc, dict):
+            continue
+        content = doc.get("content", {}) if isinstance(doc, dict) else {}
+        if not isinstance(content, dict):
+            continue
+        variant_lang = content.get("docLang") or ""
+        variant_lang_upper = str(variant_lang).upper()
+        if variant_lang_upper == "" or variant_lang_upper in seen_langs:
+            continue
+        # Only HTML-format variants are reachable via the blob URL pattern.
+        formats = [str(f).upper() for f in (content.get("docFormats") or [])]
+        if "HTML" not in formats:
+            continue
+        variant_logic_id = str(content.get("logicDocId", "")).replace("id_", "")
+        variant_id_procedure = content.get("idProcedure", "")
+        variant_parts = variant_id_procedure.split("/")
+        if not variant_logic_id or len(variant_parts) < 3:
+            continue
+        variant_jurisdiction = variant_parts[0]
+        variant_year = variant_parts[2]
+        variant_year = f"20{variant_year}" if len(variant_year) == 2 else variant_year
+        variant_process = variant_id_procedure.replace("/", "_")
+        variant_blob_url = INFOCURIA_BLOB_HTML.format(
+            jurisdiction=variant_jurisdiction,
+            year=variant_year,
+            process=variant_process,
+            file_name=f"{variant_logic_id}-{variant_lang_upper}-1.html",
+        )
+        if variant_lang_upper == str(doc_lang).upper() and html != "":
+            # Already fetched the primary blob — reuse it.
+            variant_html = html
+        else:
+            try:
+                _pace_requests("infocuria_blob_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+                resp = session.get(variant_blob_url, timeout=60)
+                variant_html = resp.text if resp.status_code == 200 else ""
+            except Exception:
+                variant_html = ""
+        if variant_html == "":
+            continue
+        variant_text = get_full_text_from_html(variant_html)
+        if variant_text == "":
+            continue
+        seen_langs.add(variant_lang_upper)
+        fulltexts.append({
+            "text": variant_text,
+            "html": variant_html,
+            "text_source": "INFOCURIA_BLOB_HTML",
+            "text_language": variant_lang_upper,
+            "text_format": "html",
+        })
+
     return {
         "html": html,
         "text": text,
@@ -924,6 +1053,7 @@ def _get_case_data_sector6(celex, language="EN"):
         "summary_language": "EN" if summary != "" else "",
         "sector": "6",
         "missing_reasons": _build_missing_reasons(text=text, summary=summary),
+        "fulltexts": fulltexts,
     }
 
 
