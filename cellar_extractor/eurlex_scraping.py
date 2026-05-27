@@ -1,4 +1,5 @@
 import io
+import os
 import random
 import time
 import re
@@ -26,7 +27,16 @@ INFOCURIA_BLOB_HTML = (
 CELLAR_SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
 CELLAR_REST_BASE = "https://publications.europa.eu/resource/celex"
 HTTP_POOL_SIZE = 8
-INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
+# Default per-bucket pacing for HTTP requests (50 ms = 20 req/s per bucket).
+# Override via the ``INFOCURIA_MIN_INTERVAL_SECONDS`` env var when running
+# against an endpoint that imposes stricter rate limits, e.g. set it to 0.1
+# (10 req/s) if you see sustained 429s during a v2 multi-language run.
+try:
+    INFOCURIA_MIN_INTERVAL_SECONDS = float(
+        os.environ.get("INFOCURIA_MIN_INTERVAL_SECONDS", "0.05")
+    )
+except (TypeError, ValueError):
+    INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
 
 LANG_AUTH_TO_SHORT = {
     "BUL": "BG",
