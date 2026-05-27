@@ -312,8 +312,18 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
     return sorted(filtered, key=_rank)[0]
 
 
-def _fetch_sector8_work_uri(celex):
+def _fetch_sector8_work_uri(celex, sector="8"):
+    """Resolve a CELEX to its CELLAR work URI.
+
+    Historically only used for sector 8 (hence the function name and the
+    hard-coded sector filter). Now parameterised so the sector-6 CELLAR
+    fallback can use the same machinery — pre-2001 CJEU judgments aren't
+    indexed by InfoCuria, but CELLAR carries them. The function name is
+    kept for backwards compatibility; behaviour with the default
+    ``sector="8"`` is unchanged.
+    """
     escaped = _escape_sparql_literal(celex)
+    escaped_sector = _escape_sparql_literal(str(sector))
     query = f"""
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         select distinct ?doc
@@ -321,7 +331,7 @@ def _fetch_sector8_work_uri(celex):
             ?doc cdm:resource_legal_id_celex ?celex .
             ?doc cdm:resource_legal_id_sector ?sector .
             FILTER(STR(?celex) = "{escaped}")
-            FILTER(STR(?sector) = "8")
+            FILTER(STR(?sector) = "{escaped_sector}")
         }}
         order by asc(str(?doc))
         limit 1
@@ -726,13 +736,75 @@ def _get_case_data_sector3(celex, language="EN"):
     }
 
 
+def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
+    """Pre-2001-style fallback for sector 6: pull the case from CELLAR.
+
+    InfoCuria's REST API doesn't index judgments older than ~2001 (the
+    /suggest endpoint returns an empty list, /procedures yields no hits).
+    CELLAR carries those cases — sometimes only in the procedural language,
+    sometimes in all 23 EU languages with PDF + XHTML manifestations.
+
+    This helper reuses sector 8's manifestation-fetching machinery
+    (``_fetch_sector8_work_uri`` + ``_fetch_sector8_items_for_work`` +
+    ``_choose_best_sector8_item`` + ``_extract_item_payload``) which
+    already handles the format precedence (xhtml > html > xml > pdf) and
+    the per-language preference logic. Only the work-URI SPARQL filter
+    needed to be parameterised (it used to hard-code sector=8).
+
+    Returns the same dict shape as ``_get_case_data_sector6`` so callers
+    don't need to special-case the fallback path. Keywords / eurovoc come
+    from CDM ``resource_legal_is_about_subject-matter`` labels so the row
+    isn't metadata-empty.
+    """
+    work_uri = _fetch_sector8_work_uri(celex, sector="6")
+    if work_uri == "":
+        return None
+
+    candidates = _fetch_sector8_items_for_work(work_uri)
+    best = _choose_best_sector8_item(candidates, language=language, summary=False)
+    if best is None:
+        return None
+
+    text, markup, normalized_format = _extract_item_payload(
+        best["item_url"], best["format"]
+    )
+    if text == "":
+        return None
+
+    keywords_list = _fetch_sector8_subject_labels(work_uri, language="en")
+    keywords = ";".join(keywords_list)
+
+    return {
+        "html": markup if markup != "" else (f"<pre>{text}</pre>" if text != "" else ""),
+        "text": text,
+        "summary": "",
+        "keywords": keywords,
+        "directory_codes": "",
+        "eurovoc": keywords,
+        "advocate": "",
+        "judge": "",
+        "affecting_ids": "",
+        "affecting_string": "",
+        "citations_extra": "",
+        "text_source": "CELLAR_ITEM",
+        "text_language": best.get("language", "") or language.upper(),
+        "text_format": normalized_format or best.get("format", ""),
+        "summary_source": "",
+        "summary_language": "",
+        "sector": "6",
+        "missing_reasons": _build_missing_reasons(text=text, summary=""),
+    }
+
+
 def _get_case_data_sector6(celex, language="EN"):
     normalized = _normalize_celex(celex)
     if not normalized.startswith("6"):
         return None
     published_id = _published_id_from_celex(normalized)
     if published_id == "":
-        return None
+        # Even a malformed CELEX could still match a CELLAR record; let the
+        # fallback try before bailing.
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     suggest_payload = {
         "searchTerm": published_id,
@@ -741,7 +813,7 @@ def _get_case_data_sector6(celex, language="EN"):
     }
     suggest_response = _post_json(INFOCURIA_SUGGEST, suggest_payload)
     if not isinstance(suggest_response, list) or len(suggest_response) == 0:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     procedure_info = None
     for item in suggest_response:
@@ -753,11 +825,11 @@ def _get_case_data_sector6(celex, language="EN"):
         procedure_info = suggest_response[0].get("procedureDocInfo", {})
 
     if not isinstance(procedure_info, dict) or procedure_info.get("id") is None:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     aff_id, _ = _extract_aff_id_from_suggest_identifier(procedure_info["id"])
     if aff_id == "":
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     procedures_payload = {
         "affId": aff_id,
@@ -768,7 +840,7 @@ def _get_case_data_sector6(celex, language="EN"):
     procedures = _post_json(INFOCURIA_PROCEDURES, procedures_payload)
     hits = procedures.get("searchHits", []) if isinstance(procedures, dict) else []
     if len(hits) == 0:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     root_hit = hits[0]
     root_content = root_hit.get("content", {}) if isinstance(root_hit, dict) else {}
@@ -779,7 +851,7 @@ def _get_case_data_sector6(celex, language="EN"):
     )
     selected_doc = _choose_best_document(documents, language=language)
     if selected_doc is None:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     summary_from_documents = _extract_summary_from_documents(documents, language="en")
 
@@ -787,7 +859,7 @@ def _get_case_data_sector6(celex, language="EN"):
     id_procedure = selected_doc["idProcedure"]
     proc_parts = id_procedure.split("/")
     if len(proc_parts) < 3:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
     jurisdiction = proc_parts[0]
     year = proc_parts[2]
     year = f"20{year}" if len(year) == 2 else year
