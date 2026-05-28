@@ -154,12 +154,18 @@ def test_fallback_handles_pdf_format(monkeypatch):
     assert data["text_format"] == "pdf"
 
 
-def test_fallback_does_not_run_when_infocuria_succeeds(monkeypatch):
-    """The legacy InfoCuria path must keep working unchanged for modern
-    (post-2001) cases — the fallback is only a safety net."""
-    eurlex_scraping._get_case_data_cached.cache_clear()
+def test_infocuria_path_still_works_when_cellar_supplement_finds_nothing(monkeypatch):
+    """When InfoCuria succeeds and CELLAR has no extra languages to add,
+    the InfoCuria-only path should still produce the same dict shape.
 
-    sparql_called = []
+    Historical note: an earlier version of this test asserted CELLAR was
+    NOT called when InfoCuria succeeded ("fallback-only" semantics).
+    The behaviour changed in the next PR — CELLAR is now consulted
+    unconditionally to supplement language coverage. This test now just
+    verifies the InfoCuria-sourced fields survive intact when CELLAR has
+    no new languages to contribute.
+    """
+    eurlex_scraping._get_case_data_cached.cache_clear()
 
     def _fake_post(url, payload, retries=3):
         if url.endswith("/suggest"):
@@ -203,18 +209,19 @@ def test_fallback_does_not_run_when_infocuria_succeeds(monkeypatch):
 
     monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _Session())
 
-    # The CELLAR helper must NOT be invoked.
-    def _no_call_work_uri(*args, **kwargs):
-        sparql_called.append(args)
-        raise AssertionError("CELLAR fallback should not run when InfoCuria succeeds")
-
-    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_work_uri", _no_call_work_uri)
+    # CELLAR returns no work URI for this case — supplementation is a noop.
+    monkeypatch.setattr(
+        eurlex_scraping, "_fetch_sector8_work_uri",
+        lambda celex, sector="8": "",
+    )
 
     data = eurlex_scraping._get_case_data_sector6("62024CJ0131", language="EN")
 
     assert data is not None
     assert data["text_source"] == "INFOCURIA_BLOB_HTML"
-    assert sparql_called == []  # double-check
+    # Only InfoCuria's EN entry — no CELLAR-supplemented rows.
+    assert {e["text_language"] for e in data["fulltexts"]} == {"EN"}
+    assert {e["text_source"] for e in data["fulltexts"]} == {"INFOCURIA_BLOB_HTML"}
 
 
 def test_fetch_work_uri_accepts_sector_parameter(monkeypatch):
