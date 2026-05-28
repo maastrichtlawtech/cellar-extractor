@@ -1044,6 +1044,37 @@ def _get_case_data_sector6(celex, language="EN"):
             "text_format": "html",
         })
 
+    # Supplement InfoCuria fulltexts with any languages CELLAR has that
+    # InfoCuria didn't expose. InfoCuria's documents.searchHits typically
+    # carries only the procedural language plus EN; CELLAR's CDM model
+    # exposes all 23 EU-official manifestations via expression_uses_language.
+    # We keep InfoCuria's entries where languages overlap (the court's own
+    # publication is typically higher fidelity) and append CELLAR-sourced
+    # entries for any missing languages. Metadata fields (judge, advocate,
+    # directory_codes, etc.) remain InfoCuria-sourced — CELLAR cannot
+    # populate them.
+    #
+    # All-in-one try/except: a CELLAR-side failure must never kill the
+    # InfoCuria-sourced row we already built.
+    try:
+        cellar_work_uri = _fetch_sector8_work_uri(normalized, sector="6")
+        if cellar_work_uri:
+            cellar_candidates = _fetch_sector8_items_for_work(cellar_work_uri)
+            cellar_fulltexts = _fanout_fulltexts_from_candidates(
+                cellar_candidates, source_label="CELLAR_ITEM"
+            )
+            for entry in cellar_fulltexts:
+                entry_lang = entry.get("text_language", "").upper()
+                if not entry_lang or entry_lang in seen_langs:
+                    continue
+                seen_langs.add(entry_lang)
+                fulltexts.append(entry)
+    except Exception:
+        # CELLAR supplementation is best-effort. If anything goes wrong
+        # (SPARQL timeout, network hiccup, schema drift on the manifestation
+        # graph) the InfoCuria-only result is still returned.
+        pass
+
     return {
         "html": html,
         "text": text,
