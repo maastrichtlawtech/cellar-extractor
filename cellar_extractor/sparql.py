@@ -19,7 +19,7 @@ def _query_with_retries(sparql, retries, error_message):
         except Exception as exc:
             last_error = exc
             if attempt < retries - 1:
-                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2**attempt))
     raise RuntimeError(error_message) from last_error
 
 

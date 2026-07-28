@@ -24,7 +24,7 @@ def _query_with_retries(sparql, retries, error_message):
         except Exception as exc:
             last_error = exc
             if attempt < retries - 1:
-                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2**attempt))
     raise RuntimeError(error_message) from last_error
 
 
@@ -178,7 +178,8 @@ def get_raw_cellar_metadata_by_celex(
 
     endpoint = "https://publications.europa.eu/webapi/rdf/sparql"
     escaped = '", "'.join(celex_ids)
-    query = """
+    query = (
+        """
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         prefix skos: <http://www.w3.org/2004/02/skos/core#>
         select
@@ -192,7 +193,9 @@ def get_raw_cellar_metadata_by_celex(
                 FILTER(lang(?olabel) = "en") .
             }
         }
-    """ % escaped
+    """
+        % escaped
+    )
 
     sparql = SPARQLWrapper(endpoint)
     sparql.setReturnFormat(JSON)
@@ -252,7 +255,9 @@ def get_raw_cellar_metadata(
                 FILTER(lang(?olabel) = "en") .
             }
         }
-    """ % '", "'.join(eclis)
+    """ % '", "'.join(
+        eclis
+    )
 
     sparql = SPARQLWrapper(endpoint)
     sparql.setReturnFormat(JSON)

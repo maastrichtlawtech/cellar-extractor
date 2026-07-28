@@ -446,7 +446,9 @@ def _fetch_cited_by_only(data, threads):
         if "celex" not in chunk_df.columns or "citedD" not in chunk_df.columns:
             continue
         for celex, group in chunk_df.groupby("celex", sort=False)["citedD"]:
-            inbound_map.setdefault(str(celex).strip(), []).extend(str(v).strip() for v in group)
+            inbound_map.setdefault(str(celex).strip(), []).extend(
+                str(v).strip() for v in group
+            )
 
     deduped = {k: _deduplicate_preserving_order(v) for k, v in inbound_map.items()}
     out = pd.Series(index=data.index, dtype="string")

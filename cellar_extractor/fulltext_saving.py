@@ -50,42 +50,48 @@ def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
     fulltexts = infocuria_data.get("fulltexts")
     if fulltexts is None:
         # Legacy single-language shape.
-        return [{
-            "celex": str(celex),
-            "ecli": ecli,
-            "text": infocuria_data.get("text", ""),
-            "text_source": infocuria_data.get("text_source", ""),
-            "text_language": infocuria_data.get("text_language", ""),
-            "text_format": infocuria_data.get("text_format", ""),
-            "missing_reasons": missing_reasons_value,
-        }]
+        return [
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": infocuria_data.get("text", ""),
+                "text_source": infocuria_data.get("text_source", ""),
+                "text_language": infocuria_data.get("text_language", ""),
+                "text_format": infocuria_data.get("text_format", ""),
+                "missing_reasons": missing_reasons_value,
+            }
+        ]
 
     if not fulltexts:
         # Multi-language shape but empty — emit a single placeholder so the
         # ECLI doesn't silently disappear from the fulltexts output.
-        return [{
-            "celex": str(celex),
-            "ecli": ecli,
-            "text": "",
-            "text_source": "",
-            "text_language": "",
-            "text_format": "",
-            "missing_reasons": missing_reasons_value,
-        }]
+        return [
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": "",
+                "text_source": "",
+                "text_language": "",
+                "text_format": "",
+                "missing_reasons": missing_reasons_value,
+            }
+        ]
 
     out = []
     for entry in fulltexts:
         if not isinstance(entry, dict):
             continue
-        out.append({
-            "celex": str(celex),
-            "ecli": ecli,
-            "text": entry.get("text", ""),
-            "text_source": entry.get("text_source", ""),
-            "text_language": entry.get("text_language", ""),
-            "text_format": entry.get("text_format", ""),
-            "missing_reasons": missing_reasons_value,
-        })
+        out.append(
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": entry.get("text", ""),
+                "text_source": entry.get("text_source", ""),
+                "text_language": entry.get("text_language", ""),
+                "text_format": entry.get("text_format", ""),
+                "missing_reasons": missing_reasons_value,
+            }
+        )
     return out
 
 
@@ -179,12 +185,14 @@ def execute_sections_threads(
             data_for_records = dict(infocuria_data)
             data_for_records["text_source"] = text_source_value
             data_for_records["text"] = text
-            full.extend(_build_fulltext_records(
-                data_for_records,
-                celex=_id,
-                ecli=ecli,
-                missing_reasons_value=reasons_value,
-            ))
+            full.extend(
+                _build_fulltext_records(
+                    data_for_records,
+                    celex=_id,
+                    ecli=ecli,
+                    missing_reasons_value=reasons_value,
+                )
+            )
             key[row_index] = keyword_value
             _sum[row_index] = summary_value
             eurovocs[row_index] = infocuria_data.get("eurovoc", "")

@@ -92,7 +92,9 @@ LINK_SUMMARY = (
     "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere_SUM&from=EN"
 )
 prog = re.compile(r"^[1234567890CE]\d{4}[A-Z]{1,2}\d{3,4}\d*")
-celex_case_pattern = re.compile(r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\d{1,4})")
+celex_case_pattern = re.compile(
+    r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\d{1,4})"
+)
 """
 Method for detecting code-words for case law directory codes for cellar.
 """
@@ -310,7 +312,9 @@ def _choose_best_per_language(candidates, summary=False):
     rather than discarded — some manifestations lack
     ``expression_uses_language`` in CELLAR.
     """
-    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    format_order = (
+        SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    )
     filtered = [c for c in candidates if c.get("format") in format_order]
     if not filtered:
         return []
@@ -334,7 +338,9 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
     if len(candidates) == 0:
         return None
 
-    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    format_order = (
+        SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    )
     filtered = [
         candidate for candidate in candidates if candidate.get("format") in format_order
     ]
@@ -481,15 +487,19 @@ def _fanout_fulltexts_from_candidates(candidates, source_label):
         )
         if text == "":
             continue
-        out.append({
-            "text": text,
-            "html": markup if markup != "" else (
-                f"<pre>{text}</pre>" if text != "" else ""
-            ),
-            "text_source": source_label,
-            "text_language": cand.get("language", "") or "",
-            "text_format": normalized_format or cand.get("format", ""),
-        })
+        out.append(
+            {
+                "text": text,
+                "html": (
+                    markup
+                    if markup != ""
+                    else (f"<pre>{text}</pre>" if text != "" else "")
+                ),
+                "text_source": source_label,
+                "text_language": cand.get("language", "") or "",
+                "text_format": normalized_format or cand.get("format", ""),
+            }
+        )
     return out
 
 
@@ -1037,13 +1047,15 @@ def _get_case_data_sector6(celex, language="EN"):
         if variant_text == "":
             continue
         seen_langs.add(variant_lang_upper)
-        fulltexts.append({
-            "text": variant_text,
-            "html": variant_html,
-            "text_source": "INFOCURIA_BLOB_HTML",
-            "text_language": variant_lang_upper,
-            "text_format": "html",
-        })
+        fulltexts.append(
+            {
+                "text": variant_text,
+                "html": variant_html,
+                "text_source": "INFOCURIA_BLOB_HTML",
+                "text_language": variant_lang_upper,
+                "text_format": "html",
+            }
+        )
 
     # Supplement InfoCuria fulltexts with any languages CELLAR has that
     # InfoCuria didn't expose. InfoCuria's documents.searchHits typically

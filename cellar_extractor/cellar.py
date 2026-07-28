@@ -198,9 +198,7 @@ def filter_subject_matter(df=None, phrase=None):
     else:
         try:
             mask = (
-                df["subject_matter"]
-                .str.lower()
-                .str.contains(phrase.lower(), na=False)
+                df["subject_matter"].str.lower().str.contains(phrase.lower(), na=False)
             )
             return df[mask]
         except Exception as e:
