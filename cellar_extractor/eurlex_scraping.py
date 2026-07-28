@@ -92,9 +92,7 @@ LINK_SUMMARY = (
     "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:cIdHere_SUM&from=EN"
 )
 prog = re.compile(r"^[1234567890CE]\d{4}[A-Z]{1,2}\d{3,4}\d*")
-celex_case_pattern = re.compile(
-    r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\d{1,4})"
-)
+celex_case_pattern = re.compile(r"^6(?P<year>\d{4})(?P<kind>[A-Z]{1,2})(?P<num>\d{1,4})")
 """
 Method for detecting code-words for case law directory codes for cellar.
 """
@@ -312,9 +310,7 @@ def _choose_best_per_language(candidates, summary=False):
     rather than discarded — some manifestations lack
     ``expression_uses_language`` in CELLAR.
     """
-    format_order = (
-        SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
-    )
+    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
     filtered = [c for c in candidates if c.get("format") in format_order]
     if not filtered:
         return []
@@ -338,9 +334,7 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
     if len(candidates) == 0:
         return None
 
-    format_order = (
-        SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
-    )
+    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
     filtered = [
         candidate for candidate in candidates if candidate.get("format") in format_order
     ]
@@ -850,9 +844,7 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
         return None
 
     candidates = _fetch_sector8_items_for_work(work_uri)
-    fulltexts = _fanout_fulltexts_from_candidates(
-        candidates, source_label="CELLAR_ITEM"
-    )
+    fulltexts = _fanout_fulltexts_from_candidates(candidates, source_label="CELLAR_ITEM")
     if not fulltexts:
         return None
 
