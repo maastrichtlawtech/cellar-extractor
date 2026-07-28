@@ -438,6 +438,8 @@ def _fetch_sector8_items_for_work(work_uri):
 
 
 def _fetch_sector8_subject_labels(work_uri, language="en"):
+    # Currently unused by the case-data paths (subject-matter reaches the
+    # corpus via the metadata query); kept for enrichment tooling.
     query = f"""
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         prefix skos: <http://www.w3.org/2004/02/skos/core#>
@@ -507,10 +509,11 @@ def _get_case_data_sector8(celex, language="EN"):
     eurovoc = ""
 
     if work_uri != "":
-        subject_labels = _fetch_sector8_subject_labels(work_uri, language="en")
-        keywords = ";".join(subject_labels)
-        eurovoc = keywords
-
+        # keywords / eurovoc deliberately stay empty here: the only labels
+        # available on this path are cdm:resource_legal_is_about_subject-matter
+        # values, which already reach the corpus through the metadata query's
+        # subject_matter column. Copying them into keywords AND eurovoc
+        # produced two mislabeled duplicate columns.
         main_candidates = _fetch_sector8_items_for_work(work_uri)
         fulltexts = _fanout_fulltexts_from_candidates(
             main_candidates, source_label="CELLAR_ITEM"
@@ -827,9 +830,10 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
     needed to be parameterised (it used to hard-code sector=8).
 
     Returns the same dict shape as ``_get_case_data_sector6`` so callers
-    don't need to special-case the fallback path. Keywords / eurovoc come
-    from CDM ``resource_legal_is_about_subject-matter`` labels so the row
-    isn't metadata-empty.
+    don't need to special-case the fallback path. Keywords / eurovoc stay
+    empty on this path: subject-matter classification reaches the corpus
+    through the metadata query's ``subject_matter`` column, and copying its
+    labels into keywords/eurovoc only produced mislabeled duplicates.
     """
     work_uri = _fetch_sector8_work_uri(celex, sector="6")
     if work_uri == "":
@@ -841,9 +845,6 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
     )
     if not fulltexts:
         return None
-
-    keywords_list = _fetch_sector8_subject_labels(work_uri, language="en")
-    keywords = ";".join(keywords_list)
 
     # Primary entry for backwards-compatible top-level fields: prefer the
     # requested language, else fall back to whatever is first.
@@ -857,9 +858,9 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
         "html": primary["html"],
         "text": primary["text"],
         "summary": "",
-        "keywords": keywords,
+        "keywords": "",
         "directory_codes": "",
-        "eurovoc": keywords,
+        "eurovoc": "",
         "advocate": "",
         "judge": "",
         "affecting_ids": "",

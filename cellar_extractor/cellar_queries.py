@@ -3,6 +3,11 @@ from datetime import date, datetime, timedelta
 
 from SPARQLWrapper import SPARQLWrapper, JSON, POST
 
+# Literal placeholder CELLAR emits while a property is awaiting curation;
+# it is noise in every column it lands in (seen on
+# case_law_is_about_concept_case_law, among others).
+CELLAR_PLACEHOLDER_VALUES = {"Provisional data"}
+
 DEFAULT_ECLI_START_DATE = "1954-01-01"
 MAX_SORTED_TOP_LIMIT = 10000
 ECLI_WINDOW_DAYS = 366
@@ -209,6 +214,8 @@ def get_raw_cellar_metadata_by_celex(
             continue
         key = predicate_uri.rsplit("#", 1)[-1]
         val = res.get("olabel", {}).get("value") or res["o"]["value"]
+        if val in CELLAR_PLACEHOLDER_VALUES:
+            continue
         metadata[celex].setdefault(key, []).append(val)
     return metadata
 
@@ -265,5 +272,7 @@ def get_raw_cellar_metadata(
             continue
         key = predicate_uri.rsplit("#", 1)[-1]
         val = res.get("olabel", {}).get("value") or res["o"]["value"]
+        if val in CELLAR_PLACEHOLDER_VALUES:
+            continue
         metadata[ecli].setdefault(key, []).append(val)
     return metadata
