@@ -104,10 +104,11 @@ def test_fallback_triggers_when_infocuria_suggest_empty(monkeypatch):
     assert data["sector"] == "6"
 
 
-def test_fallback_keywords_come_from_cellar_subject_labels(monkeypatch):
-    """When falling back to CELLAR the keywords + eurovoc columns are
-    populated from CDM subject-matter labels — otherwise the row would
-    be metadata-empty."""
+def test_fallback_keywords_and_eurovoc_stay_empty(monkeypatch):
+    """The CELLAR fallback no longer copies subject-matter labels into
+    keywords/eurovoc: those labels are neither CURIA keywords nor EuroVoc
+    concepts, and they already reach the corpus through the metadata
+    query's subject_matter column. Both fields stay empty here."""
     eurlex_scraping._get_case_data_cached.cache_clear()
     _stub_infocuria_empty(monkeypatch, suggest_empty=True)
     _stub_cellar_with_payload(
@@ -117,9 +118,8 @@ def test_fallback_keywords_come_from_cellar_subject_labels(monkeypatch):
 
     data = eurlex_scraping._get_case_data_sector6("61964CJ0006", language="EN")
 
-    assert "Free movement of goods" in data["keywords"]
-    assert "Customs Union" in data["keywords"]
-    assert data["eurovoc"] == data["keywords"]  # mirror, as elsewhere
+    assert data["keywords"] == ""
+    assert data["eurovoc"] == ""
 
 
 def test_fallback_returns_none_when_cellar_also_empty(monkeypatch):
