@@ -72,7 +72,7 @@ def test_get_entire_page_uses_infocuria_data(monkeypatch):
             "directory_codes": "15.20.10",
             "advocate": "Adv Name",
             "judge": "Judge Name",
-            "affecting_strings": "C-1/20",
+            "affecting_string": "joined: C-1/20",
             "citations_extra": "Party A;Judgment",
         },
     )
@@ -153,6 +153,14 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
 
     monkeypatch.setattr(eurlex_scraping, "_post_json", _fake_post)
     monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
+    # Sector 6 now also supplements with CELLAR's multi-language manifestation
+    # graph. For this InfoCuria-focused test, stub the CELLAR side so it
+    # noops — supplementation behaviour itself is covered in
+    # test_sector6_cellar_supplement.py.
+    monkeypatch.setattr(
+        eurlex_scraping, "_fetch_sector8_work_uri",
+        lambda celex, sector="8": "",
+    )
 
     data = eurlex_scraping.get_case_data_by_celex_id("62024CJ0131", language="EN")
 

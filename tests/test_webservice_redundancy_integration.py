@@ -121,7 +121,7 @@ def test_webservice_current_pipeline_data_is_citation_only(webservice_ready):
 def test_webservice_outbound_citations_match_sparql_for_sample_cases(webservice_ready):
     username, password = webservice_ready
     sample = ["62019CJ0668", "62019CJ0667", "62024CJ0131"]
-    sparql_df = pd.DataFrame({"CELEX IDENTIFIER": sample})
+    sparql_df = pd.DataFrame({"celex": sample})
     add_citations_separate(sparql_df, threads=1)
 
     for idx, celex in enumerate(sample):
@@ -136,7 +136,7 @@ def test_webservice_outbound_citations_match_sparql_for_sample_cases(webservice_
 
 def test_webservice_does_not_cover_inbound_citations_like_sparql(webservice_ready):
     username, password = webservice_ready
-    sample = pd.DataFrame({"CELEX IDENTIFIER": ["62019CJ0668", "62019CJ0667"]})
+    sample = pd.DataFrame({"celex": ["62019CJ0668", "62019CJ0667"]})
 
     soap_df = sample.copy()
     sparql_df = sample.copy()

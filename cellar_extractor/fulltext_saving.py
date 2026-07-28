@@ -24,6 +24,77 @@ from tqdm import tqdm
 MAX_FULLTEXT_WORKERS = 6
 
 
+def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
+    """Convert one CELEX's ``get_case_data_by_celex_id`` result into a list
+    of JSON-ready records, one per language.
+
+    * If ``infocuria_data["fulltexts"]`` is present and non-empty, emit one
+      record per language entry.
+    * If the list exists but is empty (the case had no recoverable body in
+      any language), emit a single placeholder record so the ECLI is still
+      represented in ``fulltexts.parquet`` (carries the missing-reasons trail).
+    * If no ``fulltexts`` list is present at all (legacy single-language
+      handlers, test stubs, etc.), fall back to the top-level
+      ``text`` / ``text_source`` / ``text_language`` / ``text_format`` fields —
+      backwards-compatible.
+
+    Each output record has the shape::
+
+        {celex, ecli, text, text_source, text_language, text_format,
+         missing_reasons}
+
+    """
+    if not isinstance(infocuria_data, dict):
+        return []
+
+    fulltexts = infocuria_data.get("fulltexts")
+    if fulltexts is None:
+        # Legacy single-language shape.
+        return [
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": infocuria_data.get("text", ""),
+                "text_source": infocuria_data.get("text_source", ""),
+                "text_language": infocuria_data.get("text_language", ""),
+                "text_format": infocuria_data.get("text_format", ""),
+                "missing_reasons": missing_reasons_value,
+            }
+        ]
+
+    if not fulltexts:
+        # Multi-language shape but empty — emit a single placeholder so the
+        # ECLI doesn't silently disappear from the fulltexts output.
+        return [
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": "",
+                "text_source": "",
+                "text_language": "",
+                "text_format": "",
+                "missing_reasons": missing_reasons_value,
+            }
+        ]
+
+    out = []
+    for entry in fulltexts:
+        if not isinstance(entry, dict):
+            continue
+        out.append(
+            {
+                "celex": str(celex),
+                "ecli": ecli,
+                "text": entry.get("text", ""),
+                "text_source": entry.get("text_source", ""),
+                "text_language": entry.get("text_language", ""),
+                "text_format": entry.get("text_format", ""),
+                "missing_reasons": missing_reasons_value,
+            }
+        )
+    return out
+
+
 def execute_sections_threads(
     celex,
     eclis,
@@ -102,16 +173,25 @@ def execute_sections_threads(
                 reasons.append("UNAVAILABLE_UPSTREAM")
             reasons_value = ";".join(dict.fromkeys(reasons))
 
-            full.append(
-                {
-                    "celex": str(_id),
-                    "ecli": ecli,
-                    "text": text,
-                    "text_source": text_source_value,
-                    "text_language": infocuria_data.get("text_language", ""),
-                    "text_format": infocuria_data.get("text_format", ""),
-                    "missing_reasons": reasons_value,
-                }
+            # Multi-language fanout: if the handler populated a `fulltexts`
+            # list, emit one row per language (and stamp the same
+            # missing_reasons on every row). Otherwise fall back to the
+            # single-row legacy shape via _build_fulltext_records.
+            #
+            # Replace the chosen "primary" text with the post-fallback `text`
+            # we computed above (the legacy path applies extractor fallback
+            # extraction when the upstream text was empty) so we don't lose
+            # that behaviour for the primary entry.
+            data_for_records = dict(infocuria_data)
+            data_for_records["text_source"] = text_source_value
+            data_for_records["text"] = text
+            full.extend(
+                _build_fulltext_records(
+                    data_for_records,
+                    celex=_id,
+                    ecli=ecli,
+                    missing_reasons_value=reasons_value,
+                )
             )
             key[row_index] = keyword_value
             _sum[row_index] = summary_value
@@ -119,7 +199,7 @@ def execute_sections_threads(
             case_codes[row_index] = infocuria_data.get("directory_codes", "")
             adv_general[row_index] = infocuria_data.get("advocate", "")
             affecting_id[row_index] = infocuria_data.get("affecting_ids", "")
-            affecting_str[row_index] = infocuria_data.get("affecting_strings", "")
+            affecting_str[row_index] = infocuria_data.get("affecting_string", "")
             judge_rapporteur[row_index] = infocuria_data.get("judge", "")
             citations_extra[row_index] = infocuria_data.get("citations_extra", "")
             fulltext_source[row_index] = text_source_value
@@ -236,8 +316,8 @@ def add_sections(
     and `fulltext_output_path` parameters are kept as deprecated aliases.
     """
     source_indices = data.index.tolist()
-    celex = data.loc[:, "CELEX IDENTIFIER"].reset_index(drop=True)
-    eclis = data.loc[:, "ECLI"].reset_index(drop=True)
+    celex = data.loc[:, "celex"].reset_index(drop=True)
+    eclis = data.loc[:, "ecli"].reset_index(drop=True)
     length = celex.size
     time.sleep(1)
     _bar = tqdm(
@@ -295,14 +375,14 @@ def add_sections(
         t.start()
     for t in threads:
         t.join()
-    add_column_frow_list(data, "celex_summary", list_sum)
-    add_column_frow_list(data, "celex_keywords", list_key)
-    add_column_frow_list(data, "celex_eurovoc", list_eurovoc)
-    add_column_frow_list(data, "celex_directory_codes", list_codes)
+    add_column_frow_list(data, "summary", list_sum)
+    add_column_frow_list(data, "keywords", list_key)
+    add_column_frow_list(data, "eurovoc", list_eurovoc)
+    add_column_frow_list(data, "directory_codes", list_codes)
     add_column_frow_list(data, "advocate_general", list_adv)
     add_column_frow_list(data, "judge_rapporteur", list_judge)
     add_column_frow_list(data, "affecting_ids", list_affecting_id)
-    add_column_frow_list(data, "affecting_strings", list_affecting_str)
+    add_column_frow_list(data, "affecting_string", list_affecting_str)
     add_column_frow_list(data, "citations_extra_info", list_citations_extra)
     add_column_frow_list(data, "fulltext_source", list_fulltext_source)
     add_column_frow_list(data, "summary_source", list_summary_source)
@@ -334,11 +414,17 @@ def add_sections(
 
 
 def add_column_frow_list(data, name, list):
-    """
-    Used for adding columns easier to a dataframe for add_sections().
+    """Add or replace a column on the enriched dataframe.
+
+    The canonical schema in cellar_extractor.schema pre-populates the row with
+    every contracted column (filled with None), so by the time enrichment
+    runs the column may already exist. Drop it first then insert so we always
+    write enrichment values without colliding.
     """
     column = pd.Series([], dtype="string")
     for _item in list:
         column = pd.concat([column, _item])
     column.sort_index(inplace=True)
+    if name in data.columns:
+        data.drop(columns=[name], inplace=True)
     data.insert(1, name, column)

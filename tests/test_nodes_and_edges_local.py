@@ -7,7 +7,7 @@ from cellar_extractor import nodes_and_edges
 def test_get_edges_list_returns_all_outbound_edges():
     df = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["A", "B", "C"],
+            "celex": ["A", "B", "C"],
             "citing": ["B;C", "C", ""],
         }
     )
@@ -21,7 +21,7 @@ def test_get_edges_list_returns_all_outbound_edges():
 def test_get_edges_list_only_local_filters_external_targets():
     df = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["A", "B"],
+            "celex": ["A", "B"],
             "citing": ["B;EXT", ""],
         }
     )
@@ -35,7 +35,7 @@ def test_get_edges_list_only_local_filters_external_targets():
 def test_get_nodes_and_edges_lists_delegates_cleanly():
     df = pd.DataFrame(
         {
-            "CELEX IDENTIFIER": ["A", "B"],
+            "celex": ["A", "B"],
             "citing": ["B", ""],
         }
     )

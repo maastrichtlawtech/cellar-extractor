@@ -5,21 +5,19 @@ def _normalize_relation_values(value):
 
 
 def extract_containing_subject_matter(df, phrase):
-    returner = df[
-        df["LEGAL RESOURCE IS ABOUT SUBJECT MATTER"].str.contains(phrase, na=False)
-    ]
+    returner = df[df["subject_matter"].str.contains(phrase, na=False)]
     return returner
 
 
 def get_df_with_celexes(df, celexes):
-    returner = df[df["CELEX IDENTIFIER"].isin(celexes)]
+    returner = df[df["celex"].isin(celexes)]
     return returner
 
 
 def get_edges_list(df, only_local):
-    extraction = df[["CELEX IDENTIFIER", "citing"]]
+    extraction = df[["celex", "citing"]]
     extraction.reset_index(inplace=True)
-    keys = extraction["CELEX IDENTIFIER"].tolist()
+    keys = extraction["celex"].tolist()
     vals = extraction["citing"].tolist()
     nodes = set()
     edges = []

@@ -1,4 +1,5 @@
 import io
+import os
 import random
 import time
 import re
@@ -24,8 +25,18 @@ INFOCURIA_BLOB_HTML = (
     + "/blob/download-file-html/{jurisdiction}/{year}/{process}/{file_name}"
 )
 CELLAR_SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
+CELLAR_REST_BASE = "https://publications.europa.eu/resource/celex"
 HTTP_POOL_SIZE = 8
-INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
+# Default per-bucket pacing for HTTP requests (50 ms = 20 req/s per bucket).
+# Override via the ``INFOCURIA_MIN_INTERVAL_SECONDS`` env var when running
+# against an endpoint that imposes stricter rate limits, e.g. set it to 0.1
+# (10 req/s) if you see sustained 429s during a v2 multi-language run.
+try:
+    INFOCURIA_MIN_INTERVAL_SECONDS = float(
+        os.environ.get("INFOCURIA_MIN_INTERVAL_SECONDS", "0.05")
+    )
+except (TypeError, ValueError):
+    INFOCURIA_MIN_INTERVAL_SECONDS = 0.05
 
 LANG_AUTH_TO_SHORT = {
     "BUL": "BG",
@@ -87,8 +98,22 @@ Method for detecting code-words for case law directory codes for cellar.
 """
 
 _thread_local = threading.local()
-_rate_limit_lock = threading.Lock()
+# Per-bucket locks let independent endpoints (InfoCuria suggest, blob-html,
+# CELLAR REST, etc.) pace in parallel rather than serialising on a single
+# global mutex. The guard lock only protects the registry, never the sleep.
+_bucket_locks_guard = threading.Lock()
+_bucket_locks = {}
 _last_request_at = {}
+
+
+def _bucket_lock(bucket):
+    """Return the lock dedicated to ``bucket``, creating it on first use."""
+    with _bucket_locks_guard:
+        lock = _bucket_locks.get(bucket)
+        if lock is None:
+            lock = threading.Lock()
+            _bucket_locks[bucket] = lock
+        return lock
 
 
 def _normalize_celex(celex):
@@ -109,14 +134,26 @@ def _sleep_with_backoff(attempt, base=0.2):
 
 
 def _pace_requests(bucket, min_interval):
-    with _rate_limit_lock:
+    """Throttle requests to ``bucket`` so consecutive calls are at least
+    ``min_interval`` apart, **without serialising across buckets** and
+    **without holding any lock while sleeping**.
+
+    The bucket's slot is reserved atomically inside the lock (so concurrent
+    same-bucket waiters queue up correctly), then the sleep happens with no
+    lock held — letting other threads on other buckets proceed in parallel.
+    """
+    lock = _bucket_lock(bucket)
+    with lock:
         now = time.monotonic()
         last = _last_request_at.get(bucket, 0.0)
         wait = min_interval - (now - last)
-        if wait > 0:
-            time.sleep(wait)
-            now = time.monotonic()
-        _last_request_at[bucket] = now
+        # Reserve the next slot atomically. If the previous slot is in the
+        # future (because a concurrent waiter already reserved it), our wait
+        # extends to one min_interval past that.
+        next_slot = max(now, last + min_interval)
+        _last_request_at[bucket] = next_slot
+    if wait > 0:
+        time.sleep(wait)
 
 
 def _get_http_session():
@@ -162,6 +199,9 @@ def _post_json(url, payload, retries=3):
     return None
 
 
+SPARQL_REQUEST_TIMEOUT_SECONDS = 30
+
+
 def _query_cellar_sparql(query, retries=3):
     last_error = None
     for attempt in range(retries):
@@ -169,6 +209,7 @@ def _query_cellar_sparql(query, retries=3):
             sparql = SPARQLWrapper(CELLAR_SPARQL_ENDPOINT)
             sparql.setReturnFormat(JSON)
             sparql.setMethod(POST)
+            sparql.setTimeout(SPARQL_REQUEST_TIMEOUT_SECONDS)
             sparql.setQuery(query)
             return sparql.queryAndConvert()
         except Exception as exc:
@@ -254,6 +295,41 @@ def _extract_item_payload(item_url, format_hint):
     return "", "", hinted
 
 
+def _choose_best_per_language(candidates, summary=False):
+    """Return at most one best candidate per language, picking the best
+    format within each language group.
+
+    This is the multi-language analogue of :func:`_choose_best_sector8_item`.
+    Used to drive the ``fulltexts: [...]`` fanout — every language CELLAR has
+    for a work becomes one row in the output, with format precedence
+    (xhtml > html > xml > pdf for main, configurable for summaries) applied
+    within each language bucket.
+
+    Candidates with formats outside the allowed precedence list are
+    dropped. Candidates without a language tag are grouped under ``""``
+    rather than discarded — some manifestations lack
+    ``expression_uses_language`` in CELLAR.
+    """
+    format_order = SECTOR8_SUMMARY_FORMAT_ORDER if summary else SECTOR8_MAIN_FORMAT_ORDER
+    filtered = [c for c in candidates if c.get("format") in format_order]
+    if not filtered:
+        return []
+
+    by_lang: dict = {}
+    for c in filtered:
+        lang = c.get("language", "")
+        current = by_lang.get(lang)
+        if current is None:
+            by_lang[lang] = c
+            continue
+        # Keep the one with the better (smaller) format rank.
+        current_rank = format_order.get(current.get("format", ""), 99)
+        new_rank = format_order.get(c.get("format", ""), 99)
+        if new_rank < current_rank:
+            by_lang[lang] = c
+    return list(by_lang.values())
+
+
 def _choose_best_sector8_item(candidates, language="EN", summary=False):
     if len(candidates) == 0:
         return None
@@ -281,8 +357,18 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
     return sorted(filtered, key=_rank)[0]
 
 
-def _fetch_sector8_work_uri(celex):
+def _fetch_sector8_work_uri(celex, sector="8"):
+    """Resolve a CELEX to its CELLAR work URI.
+
+    Historically only used for sector 8 (hence the function name and the
+    hard-coded sector filter). Now parameterised so the sector-6 CELLAR
+    fallback can use the same machinery — pre-2001 CJEU judgments aren't
+    indexed by InfoCuria, but CELLAR carries them. The function name is
+    kept for backwards compatibility; behaviour with the default
+    ``sector="8"`` is unchanged.
+    """
     escaped = _escape_sparql_literal(celex)
+    escaped_sector = _escape_sparql_literal(str(sector))
     query = f"""
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         select distinct ?doc
@@ -290,7 +376,7 @@ def _fetch_sector8_work_uri(celex):
             ?doc cdm:resource_legal_id_celex ?celex .
             ?doc cdm:resource_legal_id_sector ?sector .
             FILTER(STR(?celex) = "{escaped}")
-            FILTER(STR(?sector) = "8")
+            FILTER(STR(?sector) = "{escaped_sector}")
         }}
         order by asc(str(?doc))
         limit 1
@@ -352,6 +438,8 @@ def _fetch_sector8_items_for_work(work_uri):
 
 
 def _fetch_sector8_subject_labels(work_uri, language="en"):
+    # Currently unused by the case-data paths (subject-matter reaches the
+    # corpus via the metadata query); kept for enrichment tooling.
     query = f"""
         prefix cdm: <http://publications.europa.eu/ontology/cdm#>
         prefix skos: <http://www.w3.org/2004/02/skos/core#>
@@ -378,9 +466,41 @@ def _fetch_sector8_subject_labels(work_uri, language="en"):
     return list(dict.fromkeys([label for label in labels if label != ""]))
 
 
+def _fanout_fulltexts_from_candidates(candidates, source_label):
+    """Resolve every per-language best candidate into a fulltext record.
+
+    Returns a list of dicts shaped like the ``fulltexts`` entries the
+    downstream JSON writer consumes: ``{text, text_source, text_language,
+    text_format}``. Records with empty bodies are dropped so consumers
+    don't store an extra zero-byte row per missing language.
+    """
+    out = []
+    for cand in _choose_best_per_language(candidates, summary=False):
+        text, markup, normalized_format = _extract_item_payload(
+            cand["item_url"], cand["format"]
+        )
+        if text == "":
+            continue
+        out.append(
+            {
+                "text": text,
+                "html": (
+                    markup
+                    if markup != ""
+                    else (f"<pre>{text}</pre>" if text != "" else "")
+                ),
+                "text_source": source_label,
+                "text_language": cand.get("language", "") or "",
+                "text_format": normalized_format or cand.get("format", ""),
+            }
+        )
+    return out
+
+
 def _get_case_data_sector8(celex, language="EN"):
     work_uri = _fetch_sector8_work_uri(celex)
 
+    fulltexts: list = []
     text = ""
     html = ""
     text_source = ""
@@ -393,27 +513,29 @@ def _get_case_data_sector8(celex, language="EN"):
     eurovoc = ""
 
     if work_uri != "":
-        subject_labels = _fetch_sector8_subject_labels(work_uri, language="en")
-        keywords = ";".join(subject_labels)
-        eurovoc = keywords
-
+        # keywords / eurovoc deliberately stay empty here: the only labels
+        # available on this path are cdm:resource_legal_is_about_subject-matter
+        # values, which already reach the corpus through the metadata query's
+        # subject_matter column. Copying them into keywords AND eurovoc
+        # produced two mislabeled duplicate columns.
         main_candidates = _fetch_sector8_items_for_work(work_uri)
-        best_main = _choose_best_sector8_item(
-            main_candidates, language=language, summary=False
+        fulltexts = _fanout_fulltexts_from_candidates(
+            main_candidates, source_label="CELLAR_ITEM"
         )
-        if best_main is not None:
-            main_text, main_markup, normalized_format = _extract_item_payload(
-                best_main["item_url"], best_main["format"]
+        # Pick the "primary" entry for backwards-compatible top-level fields:
+        # prefer the requested language if available, else first in the list.
+        primary = None
+        if fulltexts:
+            lang_upper = (language or "").upper()
+            primary = next(
+                (f for f in fulltexts if f["text_language"].upper() == lang_upper),
+                fulltexts[0],
             )
-            text = main_text
-            html = (
-                main_markup
-                if main_markup != ""
-                else (f"<pre>{main_text}</pre>" if main_text != "" else "")
-            )
-            text_source = "CELLAR_ITEM"
-            text_language = best_main.get("language", "")
-            text_format = normalized_format or best_main.get("format", "")
+            text = primary["text"]
+            html = primary["html"]
+            text_source = primary["text_source"]
+            text_language = primary["text_language"]
+            text_format = primary["text_format"]
 
         summary_candidates = []
         for summary_work in _fetch_sector8_summary_work_uris(work_uri):
@@ -441,7 +563,7 @@ def _get_case_data_sector8(celex, language="EN"):
         "advocate": "",
         "judge": "",
         "affecting_ids": "",
-        "affecting_strings": "",
+        "affecting_string": "",
         "citations_extra": "",
         "text_source": text_source,
         "text_language": text_language,
@@ -450,6 +572,7 @@ def _get_case_data_sector8(celex, language="EN"):
         "summary_language": summary_language,
         "sector": "8",
         "missing_reasons": missing_reasons,
+        "fulltexts": fulltexts,
     }
 
 
@@ -535,22 +658,63 @@ def _resolve_name_by_code(code, entries, language="en"):
     return ";".join(labels)
 
 
-def _collect_affecting_ids(content):
-    fields = [
-        "joinAffairs",
-        "pourvoiAffIds",
-        "originPourvoiIds",
-        "reExamenAffIds",
-        "originReExamanIds",
-        "transfertAffIds",
-        "originTransfertIds",
-    ]
+_AFFECTING_FIELDS = (
+    ("joinAffairs", "joined"),
+    ("pourvoiAffIds", "appeal_against"),
+    ("originPourvoiIds", "appealed_in"),
+    ("reExamenAffIds", "re-examines"),
+    ("originReExamanIds", "re-examined_in"),
+    ("transfertAffIds", "transfers"),
+    ("originTransfertIds", "transferred_from"),
+)
+
+
+def _split_affecting_entry(entry):
+    """Return (raw_internal_id, published_id) from an InfoCuria affecting entry.
+
+    Entries look like ``C/0073/24/00000000RP/01/P/01#C-73/24`` — the part
+    after ``#`` is the human-readable published case number; the part before
+    is InfoCuria's internal procedure id. We surface the clean published id
+    in ``affecting_ids`` and the longer descriptive form in ``affecting_string``.
+    """
+    raw = str(entry).strip()
+    if raw == "":
+        return "", ""
+    if "#" in raw:
+        internal, published = raw.split("#", 1)
+        return internal.strip(), published.strip()
+    return raw, raw
+
+
+def _collect_affecting(content):
+    """Return (affecting_ids, affecting_string) from an InfoCuria result hit.
+
+    - ``affecting_ids``: ``;``-joined list of published case numbers (e.g. ``C-73/24``).
+    - ``affecting_string``: ``;``-joined descriptive entries prefixed with the
+      relation kind (e.g. ``joined: C-73/24``).
+    """
     ids = []
-    for field in fields:
+    strings = []
+    for field, relation in _AFFECTING_FIELDS:
         vals = content.get(field)
-        if isinstance(vals, list):
-            ids.extend([str(val).strip() for val in vals if str(val).strip() != ""])
-    return ";".join(list(dict.fromkeys(ids)))
+        if not isinstance(vals, list):
+            continue
+        for entry in vals:
+            _, published = _split_affecting_entry(entry)
+            if published == "":
+                continue
+            if published not in ids:
+                ids.append(published)
+            descriptive = f"{relation}: {published}"
+            if descriptive not in strings:
+                strings.append(descriptive)
+    return ";".join(ids), ";".join(strings)
+
+
+def _collect_affecting_ids(content):
+    """Backwards-compat alias returning only the IDs side of _collect_affecting."""
+    ids, _ = _collect_affecting(content)
+    return ids
 
 
 def _choose_best_document(doc_hits, language="EN"):
@@ -581,13 +745,149 @@ def _choose_best_document(doc_hits, language="EN"):
     return sorted(candidates, key=_rank)[0]
 
 
+def _fetch_sector3_xhtml(celex, language="EN"):
+    url = f"{CELLAR_REST_BASE}/{celex}"
+    auth_lang = (_short_lang_to_authority(language) or "ENG").lower()
+    session = _get_http_session()
+    last_error = None
+    for attempt in range(3):
+        try:
+            _pace_requests("cellar_rest_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+            response = session.get(
+                url,
+                headers={
+                    "Accept": "application/xhtml+xml",
+                    "Accept-Language": auth_lang,
+                },
+                timeout=60,
+            )
+        except Exception as exc:
+            last_error = exc
+            _sleep_with_backoff(attempt)
+            continue
+        if response.status_code == 200:
+            return response.text, response.headers.get("Content-Language", auth_lang)
+        if response.status_code == 404:
+            return "", ""
+        _sleep_with_backoff(attempt)
+    if last_error:
+        return "", ""
+    return "", ""
+
+
+def _get_case_data_sector3(celex, language="EN"):
+    xhtml, content_lang = _fetch_sector3_xhtml(celex, language=language)
+    text = ""
+    html = ""
+    text_source = ""
+    text_language = ""
+    text_format = ""
+    if xhtml != "":
+        text = get_full_text_from_html(xhtml).strip()
+        html = xhtml
+        text_source = "CELLAR_REST_XHTML"
+        primary_tag = (content_lang or "").split(",")[0].split("-")[0].upper()
+        if len(primary_tag) == 3:
+            short = _authority_lang_to_short(primary_tag)
+        elif len(primary_tag) == 2:
+            short = primary_tag
+        else:
+            short = ""
+        text_language = short or language.upper()
+        text_format = "xhtml"
+    sector_tag = celex[:1] if celex and celex[:1] in {"0", "3"} else "3"
+    return {
+        "html": html,
+        "text": text,
+        "summary": "",
+        "keywords": "",
+        "directory_codes": "",
+        "eurovoc": "",
+        "advocate": "",
+        "judge": "",
+        "affecting_ids": "",
+        "affecting_string": "",
+        "citations_extra": "",
+        "text_source": text_source,
+        "text_language": text_language,
+        "text_format": text_format,
+        "summary_source": "",
+        "summary_language": "",
+        "sector": sector_tag,
+        "missing_reasons": _build_missing_reasons(text=text, summary=""),
+    }
+
+
+def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
+    """Pre-2001-style fallback for sector 6: pull the case from CELLAR.
+
+    InfoCuria's REST API doesn't index judgments older than ~2001 (the
+    /suggest endpoint returns an empty list, /procedures yields no hits).
+    CELLAR carries those cases — sometimes only in the procedural language,
+    sometimes in all 23 EU languages with PDF + XHTML manifestations.
+
+    This helper reuses sector 8's manifestation-fetching machinery
+    (``_fetch_sector8_work_uri`` + ``_fetch_sector8_items_for_work`` +
+    ``_choose_best_sector8_item`` + ``_extract_item_payload``) which
+    already handles the format precedence (xhtml > html > xml > pdf) and
+    the per-language preference logic. Only the work-URI SPARQL filter
+    needed to be parameterised (it used to hard-code sector=8).
+
+    Returns the same dict shape as ``_get_case_data_sector6`` so callers
+    don't need to special-case the fallback path. Keywords / eurovoc stay
+    empty on this path: subject-matter classification reaches the corpus
+    through the metadata query's ``subject_matter`` column, and copying its
+    labels into keywords/eurovoc only produced mislabeled duplicates.
+    """
+    work_uri = _fetch_sector8_work_uri(celex, sector="6")
+    if work_uri == "":
+        return None
+
+    candidates = _fetch_sector8_items_for_work(work_uri)
+    fulltexts = _fanout_fulltexts_from_candidates(candidates, source_label="CELLAR_ITEM")
+    if not fulltexts:
+        return None
+
+    # Primary entry for backwards-compatible top-level fields: prefer the
+    # requested language, else fall back to whatever is first.
+    lang_upper = (language or "").upper()
+    primary = next(
+        (f for f in fulltexts if f["text_language"].upper() == lang_upper),
+        fulltexts[0],
+    )
+
+    return {
+        "html": primary["html"],
+        "text": primary["text"],
+        "summary": "",
+        "keywords": "",
+        "directory_codes": "",
+        "eurovoc": "",
+        "advocate": "",
+        "judge": "",
+        "affecting_ids": "",
+        "affecting_string": "",
+        "citations_extra": "",
+        "text_source": primary["text_source"],
+        "text_language": primary["text_language"] or language.upper(),
+        "text_format": primary["text_format"],
+        "summary_source": "",
+        "summary_language": "",
+        "sector": "6",
+        "missing_reasons": _build_missing_reasons(text=primary["text"], summary=""),
+        "fulltexts": fulltexts,
+    }
+
+
 def _get_case_data_sector6(celex, language="EN"):
     normalized = _normalize_celex(celex)
     if not normalized.startswith("6"):
         return None
     published_id = _published_id_from_celex(normalized)
     if published_id == "":
-        return None
+        # Even a malformed CELEX could still match a CELLAR record; let the
+        # fallback try before bailing.
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     suggest_payload = {
         "searchTerm": published_id,
@@ -596,7 +896,7 @@ def _get_case_data_sector6(celex, language="EN"):
     }
     suggest_response = _post_json(INFOCURIA_SUGGEST, suggest_payload)
     if not isinstance(suggest_response, list) or len(suggest_response) == 0:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     procedure_info = None
     for item in suggest_response:
@@ -608,11 +908,11 @@ def _get_case_data_sector6(celex, language="EN"):
         procedure_info = suggest_response[0].get("procedureDocInfo", {})
 
     if not isinstance(procedure_info, dict) or procedure_info.get("id") is None:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     aff_id, _ = _extract_aff_id_from_suggest_identifier(procedure_info["id"])
     if aff_id == "":
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     procedures_payload = {
         "affId": aff_id,
@@ -623,7 +923,7 @@ def _get_case_data_sector6(celex, language="EN"):
     procedures = _post_json(INFOCURIA_PROCEDURES, procedures_payload)
     hits = procedures.get("searchHits", []) if isinstance(procedures, dict) else []
     if len(hits) == 0:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     root_hit = hits[0]
     root_content = root_hit.get("content", {}) if isinstance(root_hit, dict) else {}
@@ -634,7 +934,7 @@ def _get_case_data_sector6(celex, language="EN"):
     )
     selected_doc = _choose_best_document(documents, language=language)
     if selected_doc is None:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
 
     summary_from_documents = _extract_summary_from_documents(documents, language="en")
 
@@ -642,7 +942,7 @@ def _get_case_data_sector6(celex, language="EN"):
     id_procedure = selected_doc["idProcedure"]
     proc_parts = id_procedure.split("/")
     if len(proc_parts) < 3:
-        return None
+        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
     jurisdiction = proc_parts[0]
     year = proc_parts[2]
     year = f"20{year}" if len(year) == 2 else year
@@ -673,7 +973,7 @@ def _get_case_data_sector6(celex, language="EN"):
         root_content.get("reportingJudgeML"),
         language="en",
     )
-    affecting_ids = _collect_affecting_ids(root_content)
+    affecting_ids, affecting_string = _collect_affecting(root_content)
     result_labels = ";".join(
         _extract_labels(root_content.get("procedureResultTypeML"), language="en")
     )
@@ -688,6 +988,98 @@ def _get_case_data_sector6(celex, language="EN"):
     else:
         summary_source = ""
 
+    # Multi-language fanout: InfoCuria's `documents.searchHits` already
+    # carries every docLang variant of the procedure. Fetch each blob the
+    # same way the primary one was fetched and build a fulltexts list.
+    fulltexts: list = []
+    seen_langs: set = set()
+    session = _get_http_session()
+    for doc in documents or []:
+        if not isinstance(doc, dict):
+            continue
+        content = doc.get("content", {}) if isinstance(doc, dict) else {}
+        if not isinstance(content, dict):
+            continue
+        variant_lang = content.get("docLang") or ""
+        variant_lang_upper = str(variant_lang).upper()
+        if variant_lang_upper == "" or variant_lang_upper in seen_langs:
+            continue
+        # Only HTML-format variants are reachable via the blob URL pattern.
+        formats = [str(f).upper() for f in (content.get("docFormats") or [])]
+        if "HTML" not in formats:
+            continue
+        variant_logic_id = str(content.get("logicDocId", "")).replace("id_", "")
+        variant_id_procedure = content.get("idProcedure", "")
+        variant_parts = variant_id_procedure.split("/")
+        if not variant_logic_id or len(variant_parts) < 3:
+            continue
+        variant_jurisdiction = variant_parts[0]
+        variant_year = variant_parts[2]
+        variant_year = f"20{variant_year}" if len(variant_year) == 2 else variant_year
+        variant_process = variant_id_procedure.replace("/", "_")
+        variant_blob_url = INFOCURIA_BLOB_HTML.format(
+            jurisdiction=variant_jurisdiction,
+            year=variant_year,
+            process=variant_process,
+            file_name=f"{variant_logic_id}-{variant_lang_upper}-1.html",
+        )
+        if variant_lang_upper == str(doc_lang).upper() and html != "":
+            # Already fetched the primary blob — reuse it.
+            variant_html = html
+        else:
+            try:
+                _pace_requests("infocuria_blob_get", INFOCURIA_MIN_INTERVAL_SECONDS)
+                resp = session.get(variant_blob_url, timeout=60)
+                variant_html = resp.text if resp.status_code == 200 else ""
+            except Exception:
+                variant_html = ""
+        if variant_html == "":
+            continue
+        variant_text = get_full_text_from_html(variant_html)
+        if variant_text == "":
+            continue
+        seen_langs.add(variant_lang_upper)
+        fulltexts.append(
+            {
+                "text": variant_text,
+                "html": variant_html,
+                "text_source": "INFOCURIA_BLOB_HTML",
+                "text_language": variant_lang_upper,
+                "text_format": "html",
+            }
+        )
+
+    # Supplement InfoCuria fulltexts with any languages CELLAR has that
+    # InfoCuria didn't expose. InfoCuria's documents.searchHits typically
+    # carries only the procedural language plus EN; CELLAR's CDM model
+    # exposes all 23 EU-official manifestations via expression_uses_language.
+    # We keep InfoCuria's entries where languages overlap (the court's own
+    # publication is typically higher fidelity) and append CELLAR-sourced
+    # entries for any missing languages. Metadata fields (judge, advocate,
+    # directory_codes, etc.) remain InfoCuria-sourced — CELLAR cannot
+    # populate them.
+    #
+    # All-in-one try/except: a CELLAR-side failure must never kill the
+    # InfoCuria-sourced row we already built.
+    try:
+        cellar_work_uri = _fetch_sector8_work_uri(normalized, sector="6")
+        if cellar_work_uri:
+            cellar_candidates = _fetch_sector8_items_for_work(cellar_work_uri)
+            cellar_fulltexts = _fanout_fulltexts_from_candidates(
+                cellar_candidates, source_label="CELLAR_ITEM"
+            )
+            for entry in cellar_fulltexts:
+                entry_lang = entry.get("text_language", "").upper()
+                if not entry_lang or entry_lang in seen_langs:
+                    continue
+                seen_langs.add(entry_lang)
+                fulltexts.append(entry)
+    except Exception:
+        # CELLAR supplementation is best-effort. If anything goes wrong
+        # (SPARQL timeout, network hiccup, schema drift on the manifestation
+        # graph) the InfoCuria-only result is still returned.
+        pass
+
     return {
         "html": html,
         "text": text,
@@ -698,7 +1090,7 @@ def _get_case_data_sector6(celex, language="EN"):
         "advocate": advocate,
         "judge": judge,
         "affecting_ids": affecting_ids,
-        "affecting_strings": affecting_ids,
+        "affecting_string": affecting_string,
         "citations_extra": citations_extra,
         "text_source": "INFOCURIA_BLOB_HTML" if text != "" else "",
         "text_language": str(doc_lang).upper() if doc_lang else language.upper(),
@@ -707,6 +1099,7 @@ def _get_case_data_sector6(celex, language="EN"):
         "summary_language": "EN" if summary != "" else "",
         "sector": "6",
         "missing_reasons": _build_missing_reasons(text=text, summary=summary),
+        "fulltexts": fulltexts,
     }
 
 
@@ -719,6 +1112,8 @@ def _get_case_data_cached(celex, language="EN"):
         return _get_case_data_sector6(normalized, language=language)
     if normalized.startswith("8"):
         return _get_case_data_sector8(normalized, language=language)
+    if normalized.startswith("3") or normalized.startswith("0"):
+        return _get_case_data_sector3(normalized, language=language)
     return None
 
 
@@ -730,6 +1125,10 @@ def get_case_data_by_celex_id(celex, language="EN"):
         return _get_case_data_cached(normalized, language=language.upper())
     except Exception:
         return None
+
+
+def get_legislation_by_celex_id(celex, language="EN"):
+    return get_case_data_by_celex_id(celex, language=language)
 
 
 def is_code(word):
@@ -938,21 +1337,27 @@ def get_full_text_from_html(html_text):
     It has different cases depending on the first character of the CELEX ID.
     Universal method, also replaces all "," with "_".
     """
-    # This method turns the html code from the summary page into text
-    # It has different cases depending on the first character of the CELEX ID
-    # Should only be used for summaries extraction
+    # Comma-to-underscore is preserved here for backwards compatibility with
+    # the CSV-flattened pipeline. New consumers that need faithful plain text
+    # should use get_clean_text_from_html instead.
+    text = get_clean_text_from_html(html_text)
+    return text.replace(",", "_")
+
+
+def get_clean_text_from_html(html_text):
+    """Plain-text rendering of HTML/XHTML markup, preserving commas.
+
+    Same line/whitespace normalization as get_full_text_from_html, but without
+    the legacy comma-to-underscore substitution. Suitable for downstream
+    platforms that consume natural-language text directly.
+    """
     soup = BeautifulSoup(html_text, "html.parser")
-    for script in soup(["script", "style"]):
-        script.extract()  # rip it out
+    for tag in soup(["script", "style"]):
+        tag.extract()
     text = soup.get_text()
-    # break into lines and remove leading and trailing space on each
     lines = (line.strip() for line in text.splitlines())
-    # break multi-headlines into a line each
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    # drop blank lines
-    text = "\n".join(chunk for chunk in chunks if chunk)
-    text = text.replace(",", "_")
-    return text
+    return "\n".join(chunk for chunk in chunks if chunk)
 
 
 def get_html_text_by_celex_id(id):
@@ -984,7 +1389,7 @@ def get_entire_page(celex):
     directory_codes = info.get("directory_codes", "")
     advocate = info.get("advocate", "")
     judge = info.get("judge", "")
-    affecting_strings = info.get("affecting_strings", "")
+    affecting_strings = info.get("affecting_string", "")
     citations_extra = info.get("citations_extra", "")
 
     return (
