@@ -357,6 +357,62 @@ def _choose_best_sector8_item(candidates, language="EN", summary=False):
     return sorted(filtered, key=_rank)[0]
 
 
+def _fetch_sector8_work_uris(celex, sector="8"):
+    """Resolve a CELEX to ALL of its CELLAR work URIs.
+
+    A CELEX can map to several works (partial editions / re-publications
+    carry the same identifier). Language coverage differs per work — one
+    judgment observed with a 2-language work and a 22-language sibling —
+    so callers must union manifestations across every work rather than
+    pick one arbitrarily.
+    """
+    escaped = _escape_sparql_literal(celex)
+    escaped_sector = _escape_sparql_literal(str(sector))
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        select distinct ?doc
+        where {{
+            ?doc cdm:resource_legal_id_celex ?celex .
+            ?doc cdm:resource_legal_id_sector ?sector .
+            FILTER(STR(?celex) = "{escaped}")
+            FILTER(STR(?sector) = "{escaped_sector}")
+        }}
+        order by asc(str(?doc))
+    """
+    ret = _query_cellar_sparql(query)
+    rows = ret.get("results", {}).get("bindings", []) if isinstance(ret, dict) else []
+    return [
+        r.get("doc", {}).get("value", "")
+        for r in rows
+        if r.get("doc", {}).get("value", "")
+    ]
+
+
+def _fetch_sector8_items_for_celex(celex, sector="8"):
+    """Union manifestation candidates across every work the CELEX maps to.
+
+    Deduplicates on (language, format, item_url); the per-language
+    best-candidate logic downstream handles format preference as before.
+    Returns ``(work_uris, candidates)`` so callers can reuse the URI list
+    (e.g. for summary-work discovery).
+    """
+    work_uris = _fetch_sector8_work_uris(celex, sector=sector)
+    candidates = []
+    seen = set()
+    for uri in work_uris:
+        for item in _fetch_sector8_items_for_work(uri):
+            key = (
+                item.get("language", ""),
+                item.get("format", ""),
+                item.get("item_url", ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(item)
+    return work_uris, candidates
+
+
 def _fetch_sector8_work_uri(celex, sector="8"):
     """Resolve a CELEX to its CELLAR work URI.
 
@@ -498,7 +554,7 @@ def _fanout_fulltexts_from_candidates(candidates, source_label):
 
 
 def _get_case_data_sector8(celex, language="EN"):
-    work_uri = _fetch_sector8_work_uri(celex)
+    work_uris, main_candidates = _fetch_sector8_items_for_celex(celex)
 
     fulltexts: list = []
     text = ""
@@ -512,13 +568,12 @@ def _get_case_data_sector8(celex, language="EN"):
     keywords = ""
     eurovoc = ""
 
-    if work_uri != "":
+    if work_uris:
         # keywords / eurovoc deliberately stay empty here: the only labels
         # available on this path are cdm:resource_legal_is_about_subject-matter
         # values, which already reach the corpus through the metadata query's
         # subject_matter column. Copying them into keywords AND eurovoc
         # produced two mislabeled duplicate columns.
-        main_candidates = _fetch_sector8_items_for_work(work_uri)
         fulltexts = _fanout_fulltexts_from_candidates(
             main_candidates, source_label="CELLAR_ITEM"
         )
@@ -538,8 +593,9 @@ def _get_case_data_sector8(celex, language="EN"):
             text_format = primary["text_format"]
 
         summary_candidates = []
-        for summary_work in _fetch_sector8_summary_work_uris(work_uri):
-            summary_candidates.extend(_fetch_sector8_items_for_work(summary_work))
+        for work_uri in work_uris:
+            for summary_work in _fetch_sector8_summary_work_uris(work_uri):
+                summary_candidates.extend(_fetch_sector8_items_for_work(summary_work))
         best_summary = _choose_best_sector8_item(
             summary_candidates, language=language, summary=True
         )
@@ -839,11 +895,10 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
     through the metadata query's ``subject_matter`` column, and copying its
     labels into keywords/eurovoc only produced mislabeled duplicates.
     """
-    work_uri = _fetch_sector8_work_uri(celex, sector="6")
-    if work_uri == "":
+    work_uris, candidates = _fetch_sector8_items_for_celex(celex, sector="6")
+    if not work_uris:
         return None
 
-    candidates = _fetch_sector8_items_for_work(work_uri)
     fulltexts = _fanout_fulltexts_from_candidates(candidates, source_label="CELLAR_ITEM")
     if not fulltexts:
         return None
@@ -1062,9 +1117,8 @@ def _get_case_data_sector6(celex, language="EN"):
     # All-in-one try/except: a CELLAR-side failure must never kill the
     # InfoCuria-sourced row we already built.
     try:
-        cellar_work_uri = _fetch_sector8_work_uri(normalized, sector="6")
-        if cellar_work_uri:
-            cellar_candidates = _fetch_sector8_items_for_work(cellar_work_uri)
+        _, cellar_candidates = _fetch_sector8_items_for_celex(normalized, sector="6")
+        if cellar_candidates:
             cellar_fulltexts = _fanout_fulltexts_from_candidates(
                 cellar_candidates, source_label="CELLAR_ITEM"
             )

@@ -6,12 +6,12 @@ the sector handlers return a ``fulltexts`` list with one record per
 available language, and ``fulltext_saving.execute_sections_threads`` emits
 one JSON row per (CELEX, language).
 """
+
 from __future__ import annotations
 
 import pandas as pd
 
 from cellar_extractor import eurlex_scraping, fulltext_saving
-
 
 # ---------------------------------------------------------------------------
 # _choose_best_per_language helper
@@ -22,15 +22,15 @@ def test_choose_best_per_language_returns_one_record_per_language():
     """Same language with 3 formats (xhtml > html > pdf) → best wins per lang."""
     candidates = [
         {"item_url": "u_en_xhtml", "format": "xhtml", "language": "EN"},
-        {"item_url": "u_en_pdf",   "format": "pdf",   "language": "EN"},
-        {"item_url": "u_fr_html",  "format": "html",  "language": "FR"},
-        {"item_url": "u_fr_pdf",   "format": "pdf",   "language": "FR"},
-        {"item_url": "u_it_pdf",   "format": "pdf",   "language": "IT"},
+        {"item_url": "u_en_pdf", "format": "pdf", "language": "EN"},
+        {"item_url": "u_fr_html", "format": "html", "language": "FR"},
+        {"item_url": "u_fr_pdf", "format": "pdf", "language": "FR"},
+        {"item_url": "u_it_pdf", "format": "pdf", "language": "IT"},
     ]
     out = eurlex_scraping._choose_best_per_language(candidates, summary=False)
     by_lang = {c["language"]: c for c in out}
     assert by_lang["EN"]["item_url"] == "u_en_xhtml"  # xhtml beats pdf
-    assert by_lang["FR"]["item_url"] == "u_fr_html"   # html beats pdf
+    assert by_lang["FR"]["item_url"] == "u_fr_html"  # html beats pdf
     assert by_lang["IT"]["item_url"] == "u_it_pdf"
     assert len(out) == 3
 
@@ -51,7 +51,7 @@ def test_choose_best_per_language_groups_empty_language_separately():
     dropped — some manifestations lack expression_uses_language."""
     candidates = [
         {"item_url": "u_no_lang_xhtml", "format": "xhtml", "language": ""},
-        {"item_url": "u_no_lang_pdf",   "format": "pdf",   "language": ""},
+        {"item_url": "u_no_lang_pdf", "format": "pdf", "language": ""},
         {"item_url": "u_en", "format": "xhtml", "language": "EN"},
     ]
     out = eurlex_scraping._choose_best_per_language(candidates, summary=False)
@@ -77,47 +77,72 @@ def test_sector6_infocuria_returns_fulltexts_list_with_all_languages(monkeypatch
 
     def _fake_post(url, payload, retries=3):
         if url.endswith("/suggest"):
-            return [{"procedureDocInfo": {
-                "id": "C/0131/24/00000000RP/01/P/01-999",
-                "idPublished": "C-131/24",
-            }}]
+            return [
+                {
+                    "procedureDocInfo": {
+                        "id": "C/0131/24/00000000RP/01/P/01-999",
+                        "idPublished": "C-131/24",
+                    }
+                }
+            ]
         if url.endswith("/affairId/procedures"):
-            return {"searchHits": [{
-                "content": {
-                    "matCodeML": [{"label": [{"en": "Environment"}]}],
-                    "matCode": ["ENVI"],
-                    "advocateML": [], "avg": "",
-                    "reportingJudgeML": [], "reportingJudge": "",
-                    "joinAffairs": [], "procedureResultTypeML": [],
-                    "parties": "",
-                },
-                "innerHits": {"document": {"searchHits": [
-                    {"content": {
-                        "docLang": "EN", "docFormats": ["HTML"],
-                        "logicDocId": "id_1",
-                        "idProcedure": "C/0131/24/00000000RP/01/P/01",
-                        "docTypeCode": "ARRET",
-                    }},
-                    {"content": {
-                        "docLang": "FR", "docFormats": ["HTML"],
-                        "logicDocId": "id_1",
-                        "idProcedure": "C/0131/24/00000000RP/01/P/01",
-                        "docTypeCode": "ARRET",
-                    }},
-                    {"content": {
-                        "docLang": "DE", "docFormats": ["HTML"],
-                        "logicDocId": "id_1",
-                        "idProcedure": "C/0131/24/00000000RP/01/P/01",
-                        "docTypeCode": "ARRET",
-                    }},
-                ]}},
-            }]}
+            return {
+                "searchHits": [
+                    {
+                        "content": {
+                            "matCodeML": [{"label": [{"en": "Environment"}]}],
+                            "matCode": ["ENVI"],
+                            "advocateML": [],
+                            "avg": "",
+                            "reportingJudgeML": [],
+                            "reportingJudge": "",
+                            "joinAffairs": [],
+                            "procedureResultTypeML": [],
+                            "parties": "",
+                        },
+                        "innerHits": {
+                            "document": {
+                                "searchHits": [
+                                    {
+                                        "content": {
+                                            "docLang": "EN",
+                                            "docFormats": ["HTML"],
+                                            "logicDocId": "id_1",
+                                            "idProcedure": "C/0131/24/00000000RP/01/P/01",
+                                            "docTypeCode": "ARRET",
+                                        }
+                                    },
+                                    {
+                                        "content": {
+                                            "docLang": "FR",
+                                            "docFormats": ["HTML"],
+                                            "logicDocId": "id_1",
+                                            "idProcedure": "C/0131/24/00000000RP/01/P/01",
+                                            "docTypeCode": "ARRET",
+                                        }
+                                    },
+                                    {
+                                        "content": {
+                                            "docLang": "DE",
+                                            "docFormats": ["HTML"],
+                                            "logicDocId": "id_1",
+                                            "idProcedure": "C/0131/24/00000000RP/01/P/01",
+                                            "docTypeCode": "ARRET",
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    }
+                ]
+            }
         return None
 
     fetched_langs = []
 
     class _Resp:
         status_code = 200
+
         # text varies by language so we can assert per-language bodies were stored
         def __init__(self, lang):
             self.text = f"<html>body in {lang}</html>"
@@ -165,25 +190,34 @@ def test_sector8_returns_fulltexts_for_every_available_language(monkeypatch):
     items = [
         {"item_url": "u_en", "format": "xhtml", "language": "EN"},
         {"item_url": "u_fr", "format": "xhtml", "language": "FR"},
-        {"item_url": "u_it", "format": "html",  "language": "IT"},
+        {"item_url": "u_it", "format": "html", "language": "IT"},
         {"item_url": "u_nl_pdf", "format": "pdf", "language": "NL"},
         # A duplicate-format candidate for EN — should NOT add a second EN entry
         {"item_url": "u_en_html", "format": "html", "language": "EN"},
     ]
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_work_uri",
+        eurlex_scraping,
+        "_fetch_sector8_work_uri",
         lambda celex, sector="8": work_uri,
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_items_for_work",
+        eurlex_scraping,
+        "_fetch_sector8_work_uris",
+        lambda celex, sector="8": [work_uri] if work_uri else [],
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_fetch_sector8_items_for_work",
         lambda uri: items,
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_subject_labels",
+        eurlex_scraping,
+        "_fetch_sector8_subject_labels",
         lambda uri, language="en": ["Subject"],
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_summary_work_uris",
+        eurlex_scraping,
+        "_fetch_sector8_summary_work_uris",
         lambda uri: [],
     )
 
@@ -213,18 +247,23 @@ def test_sector6_cellar_fallback_returns_all_languages(monkeypatch):
     items = [
         {"item_url": "u_en", "format": "xhtml", "language": "EN"},
         {"item_url": "u_it", "format": "xhtml", "language": "IT"},
-        {"item_url": "u_fr", "format": "html",  "language": "FR"},
+        {"item_url": "u_fr", "format": "html", "language": "FR"},
     ]
-    monkeypatch.setattr(eurlex_scraping, "_post_json",
-                        lambda url, payload, retries=3: [])
-    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_work_uri",
-                        lambda celex, sector="8": work_uri)
-    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_items_for_work",
-                        lambda uri: items)
-    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_subject_labels",
-                        lambda uri, language="en": ["Free movement of goods"])
+    monkeypatch.setattr(eurlex_scraping, "_post_json", lambda url, payload, retries=3: [])
     monkeypatch.setattr(
-        eurlex_scraping, "_extract_item_payload",
+        eurlex_scraping, "_fetch_sector8_work_uri", lambda celex, sector="8": work_uri
+    )
+    monkeypatch.setattr(
+        eurlex_scraping, "_fetch_sector8_items_for_work", lambda uri: items
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_fetch_sector8_subject_labels",
+        lambda uri, language="en": ["Free movement of goods"],
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_extract_item_payload",
         lambda url, fmt: (f"body {url}", "", fmt),
     )
 
@@ -247,18 +286,29 @@ def test_build_fulltext_records_emits_one_row_per_language():
     shape), the helper should emit one JSON-shaped dict per language with
     the celex / ecli / missing_reasons stamped on each row."""
     infocuria_data = {
-        "text": "EN body", "text_source": "INFOCURIA_BLOB_HTML",
-        "text_language": "EN", "text_format": "html",
+        "text": "EN body",
+        "text_source": "INFOCURIA_BLOB_HTML",
+        "text_language": "EN",
+        "text_format": "html",
         "fulltexts": [
-            {"text": "EN body",
-             "text_source": "INFOCURIA_BLOB_HTML",
-             "text_language": "EN", "text_format": "html"},
-            {"text": "FR corps de l'arrêt",
-             "text_source": "INFOCURIA_BLOB_HTML",
-             "text_language": "FR", "text_format": "html"},
-            {"text": "DE Urteil",
-             "text_source": "INFOCURIA_BLOB_HTML",
-             "text_language": "DE", "text_format": "html"},
+            {
+                "text": "EN body",
+                "text_source": "INFOCURIA_BLOB_HTML",
+                "text_language": "EN",
+                "text_format": "html",
+            },
+            {
+                "text": "FR corps de l'arrêt",
+                "text_source": "INFOCURIA_BLOB_HTML",
+                "text_language": "FR",
+                "text_format": "html",
+            },
+            {
+                "text": "DE Urteil",
+                "text_source": "INFOCURIA_BLOB_HTML",
+                "text_language": "DE",
+                "text_format": "html",
+            },
         ],
     }
 
