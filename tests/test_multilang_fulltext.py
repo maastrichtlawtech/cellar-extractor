@@ -328,6 +328,35 @@ def test_build_fulltext_records_emits_one_row_per_language():
     assert "corps de l'arrêt" in by_lang["FR"]["text"]
 
 
+def test_build_fulltext_records_normalizes_composite_celex():
+    """Full-text rows must use the same canonical CELEX as case loaders."""
+    records = fulltext_saving._build_fulltext_records(
+        {
+            "fulltexts": [
+                {
+                    "text": "Nederlandse tekst",
+                    "text_source": "INFOCURIA_BLOB_HTML",
+                    "text_language": "NL",
+                    "text_format": "html",
+                }
+            ]
+        },
+        celex="62025TJ0267;62025TJ0267_INF",
+        ecli="ECLI:EU:T:2026:366",
+        missing_reasons_value="",
+    )
+
+    assert records == [
+        {
+            "celex": "62025TJ0267",
+            "ecli": "ECLI:EU:T:2026:366",
+            "text": "Nederlandse tekst",
+            "text_source": "INFOCURIA_BLOB_HTML",
+            "text_language": "NL",
+            "text_format": "html",
+            "missing_reasons": "",
+        }
+    ]
 def test_build_fulltext_records_falls_back_to_single_when_no_fulltexts_list():
     """Backwards-compat: legacy infocuria_data dicts that don't carry a
     `fulltexts` list (e.g. from a plug-in or stub) still produce exactly

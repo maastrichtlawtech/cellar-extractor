@@ -5,6 +5,7 @@ import warnings
 import math
 import pandas as pd
 from cellar_extractor.eurlex_scraping import (
+    _normalize_celex,
     get_case_data_by_celex_id,
     get_html_text_by_celex_id,
     get_full_text_from_html,
@@ -47,12 +48,19 @@ def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
     if not isinstance(infocuria_data, dict):
         return []
 
+    # Metadata cells may contain several identifiers for the same ECLI, for
+    # example ``62025TJ0267;62025TJ0267_INF``. Scraping already normalizes
+    # that value, so stamp the same canonical CELEX onto every full-text row.
+    # Otherwise downstream loaders cannot attach the translations to the
+    # case row keyed by ``62025TJ0267``.
+    canonical_celex = _normalize_celex(celex)
+
     fulltexts = infocuria_data.get("fulltexts")
     if fulltexts is None:
         # Legacy single-language shape.
         return [
             {
-                "celex": str(celex),
+                "celex": canonical_celex,
                 "ecli": ecli,
                 "text": infocuria_data.get("text", ""),
                 "text_source": infocuria_data.get("text_source", ""),
@@ -67,7 +75,7 @@ def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
         # ECLI doesn't silently disappear from the fulltexts output.
         return [
             {
-                "celex": str(celex),
+                "celex": canonical_celex,
                 "ecli": ecli,
                 "text": "",
                 "text_source": "",
@@ -83,7 +91,7 @@ def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
             continue
         out.append(
             {
-                "celex": str(celex),
+                "celex": canonical_celex,
                 "ecli": ecli,
                 "text": entry.get("text", ""),
                 "text_source": entry.get("text_source", ""),
