@@ -31,7 +31,11 @@ def test_fetch_sector8_work_uri_uses_exact_celex_literal(monkeypatch):
         return {
             "results": {
                 "bindings": [
-                    {"doc": {"value": "http://publications.europa.eu/resource/cellar/example"}}
+                    {
+                        "doc": {
+                            "value": "http://publications.europa.eu/resource/cellar/example"
+                        }
+                    }
                 ]
             }
         }
@@ -49,7 +53,9 @@ def test_choose_best_sector8_item_prefers_requested_language_then_format():
         {"item_url": "b", "format": "pdf", "language": "EN"},
         {"item_url": "c", "format": "xhtml", "language": "FR"},
     ]
-    selected = eurlex_scraping._choose_best_sector8_item(candidates, language="EN", summary=False)
+    selected = eurlex_scraping._choose_best_sector8_item(
+        candidates, language="EN", summary=False
+    )
     assert selected["item_url"] == "b"
 
     selected_summary = eurlex_scraping._choose_best_sector8_item(
@@ -70,7 +76,9 @@ def test_extract_item_payload_parses_html(monkeypatch):
             return _Resp()
 
     monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
-    text, markup, fmt = eurlex_scraping._extract_item_payload("https://example.com/item", "xhtml")
+    text, markup, fmt = eurlex_scraping._extract_item_payload(
+        "https://example.com/item", "xhtml"
+    )
 
     assert "Hello" in text
     assert "<html>" in markup
@@ -89,9 +97,13 @@ def test_extract_item_payload_parses_pdf(monkeypatch):
             return _Resp()
 
     monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _FakeSession())
-    monkeypatch.setattr(eurlex_scraping, "_parse_text_from_pdf", lambda content: "Extracted PDF text")
+    monkeypatch.setattr(
+        eurlex_scraping, "_parse_text_from_pdf", lambda content: "Extracted PDF text"
+    )
 
-    text, markup, fmt = eurlex_scraping._extract_item_payload("https://example.com/item", "pdf")
+    text, markup, fmt = eurlex_scraping._extract_item_payload(
+        "https://example.com/item", "pdf"
+    )
 
     assert text == "Extracted PDF text"
     assert markup == ""
@@ -100,6 +112,7 @@ def test_extract_item_payload_parses_pdf(monkeypatch):
 
 def test_sector8_unavailable_sets_missing_reasons(monkeypatch):
     monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_work_uri", lambda celex: "")
+    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_work_uris", lambda *a, **k: [])
     data = eurlex_scraping._get_case_data_sector8("82000XX0001(01)", language="EN")
 
     assert data["text"] == ""

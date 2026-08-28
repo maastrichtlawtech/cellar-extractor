@@ -10,12 +10,12 @@ CELLAR's manifestation graph (unconditionally — not env-var gated), so the
 ``fulltexts`` list contains every language CELLAR has, with InfoCuria's
 entries kept verbatim where both sources have the same language.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from cellar_extractor import eurlex_scraping
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture builders
@@ -25,41 +25,60 @@ from cellar_extractor import eurlex_scraping
 def _make_infocuria_response(doc_langs):
     """Build a fake InfoCuria /procedures response with N docLang variants."""
     return {
-        "searchHits": [{
-            "content": {
-                "matCodeML": [{"label": [{"en": "Test subject"}]}],
-                "matCode": ["TEST"],
-                "advocateML": [], "avg": "",
-                "reportingJudgeML": [], "reportingJudge": "",
-                "joinAffairs": [], "procedureResultTypeML": [],
-                "parties": "",
-            },
-            "innerHits": {"document": {"searchHits": [
-                {"content": {
-                    "docLang": lang, "docFormats": ["HTML"],
-                    "logicDocId": "id_1",
-                    "idProcedure": "C/0001/24/00000000RP/01/P/01",
-                    "docTypeCode": "ARRET",
-                }} for lang in doc_langs
-            ]}},
-        }]
+        "searchHits": [
+            {
+                "content": {
+                    "matCodeML": [{"label": [{"en": "Test subject"}]}],
+                    "matCode": ["TEST"],
+                    "advocateML": [],
+                    "avg": "",
+                    "reportingJudgeML": [],
+                    "reportingJudge": "",
+                    "joinAffairs": [],
+                    "procedureResultTypeML": [],
+                    "parties": "",
+                },
+                "innerHits": {
+                    "document": {
+                        "searchHits": [
+                            {
+                                "content": {
+                                    "docLang": lang,
+                                    "docFormats": ["HTML"],
+                                    "logicDocId": "id_1",
+                                    "idProcedure": "C/0001/24/00000000RP/01/P/01",
+                                    "docTypeCode": "ARRET",
+                                }
+                            }
+                            for lang in doc_langs
+                        ]
+                    }
+                },
+            }
+        ]
     }
 
 
 def _patch_infocuria(monkeypatch, doc_langs):
     """Stub InfoCuria endpoints to return success with the given doc_langs."""
+
     def _post(url, payload, retries=3):
         if url.endswith("/suggest"):
-            return [{"procedureDocInfo": {
-                "id": "C/0001/24/00000000RP/01/P/01-999",
-                "idPublished": "C-1/24",
-            }}]
+            return [
+                {
+                    "procedureDocInfo": {
+                        "id": "C/0001/24/00000000RP/01/P/01-999",
+                        "idPublished": "C-1/24",
+                    }
+                }
+            ]
         if url.endswith("/affairId/procedures"):
             return _make_infocuria_response(doc_langs)
         return None
 
     class _Resp:
         status_code = 200
+
         def __init__(self, lang):
             self.text = f"<html>infocuria body in {lang}</html>"
 
@@ -90,19 +109,28 @@ def _patch_cellar(monkeypatch, languages, work_uri=None):
     ]
 
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_work_uri",
+        eurlex_scraping,
+        "_fetch_sector8_work_uri",
         lambda celex, sector="8": work_uri,
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_items_for_work",
+        eurlex_scraping,
+        "_fetch_sector8_work_uris",
+        lambda celex, sector="8": [work_uri] if work_uri else [],
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_fetch_sector8_items_for_work",
         lambda uri: items,
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_subject_labels",
+        eurlex_scraping,
+        "_fetch_sector8_subject_labels",
         lambda uri, language="en": ["CELLAR-subject"],
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_extract_item_payload",
+        eurlex_scraping,
+        "_extract_item_payload",
         lambda url, fmt: (f"cellar body for {url}", "", fmt),
     )
 
@@ -154,33 +182,48 @@ def test_metadata_fields_remain_from_infocuria_even_when_cellar_supplements(monk
 
     def _post(url, payload, retries=3):
         if url.endswith("/suggest"):
-            return [{"procedureDocInfo": {
-                "id": "C/0001/24/00000000RP/01/P/01-999",
-                "idPublished": "C-1/24",
-            }}]
+            return [
+                {
+                    "procedureDocInfo": {
+                        "id": "C/0001/24/00000000RP/01/P/01-999",
+                        "idPublished": "C-1/24",
+                    }
+                }
+            ]
         if url.endswith("/affairId/procedures"):
             return {
-                "searchHits": [{
-                    "content": {
-                        "matCodeML": [{"label": [{"en": "Environment"}]}],
-                        "matCode": ["ENVI"],
-                        "advocateML": [{"code": "KOK", "label": [{"en": "Kokott"}]}],
-                        "avg": "KOK",
-                        "reportingJudgeML": [{"code": "SGE", "label": [{"en": "Spielmann"}]}],
-                        "reportingJudge": "SGE",
-                        "joinAffairs": ["C-2/20"],
-                        "procedureResultTypeML": [{"label": [{"en": "Judgment"}]}],
-                        "parties": "Party A",
-                    },
-                    "innerHits": {"document": {"searchHits": [
-                        {"content": {
-                            "docLang": "EN", "docFormats": ["HTML"],
-                            "logicDocId": "id_1",
-                            "idProcedure": "C/0001/24/00000000RP/01/P/01",
-                            "docTypeCode": "ARRET",
-                        }},
-                    ]}},
-                }]
+                "searchHits": [
+                    {
+                        "content": {
+                            "matCodeML": [{"label": [{"en": "Environment"}]}],
+                            "matCode": ["ENVI"],
+                            "advocateML": [{"code": "KOK", "label": [{"en": "Kokott"}]}],
+                            "avg": "KOK",
+                            "reportingJudgeML": [
+                                {"code": "SGE", "label": [{"en": "Spielmann"}]}
+                            ],
+                            "reportingJudge": "SGE",
+                            "joinAffairs": ["C-2/20"],
+                            "procedureResultTypeML": [{"label": [{"en": "Judgment"}]}],
+                            "parties": "Party A",
+                        },
+                        "innerHits": {
+                            "document": {
+                                "searchHits": [
+                                    {
+                                        "content": {
+                                            "docLang": "EN",
+                                            "docFormats": ["HTML"],
+                                            "logicDocId": "id_1",
+                                            "idProcedure": "C/0001/24/00000000RP/01/P/01",
+                                            "docTypeCode": "ARRET",
+                                        }
+                                    },
+                                ]
+                            }
+                        },
+                    }
+                ]
             }
         return None
 
@@ -229,8 +272,14 @@ def test_supplementation_skips_when_cellar_work_uri_unresolvable(monkeypatch):
     eurlex_scraping._get_case_data_cached.cache_clear()
     _patch_infocuria(monkeypatch, doc_langs=["EN", "FR"])
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_work_uri",
+        eurlex_scraping,
+        "_fetch_sector8_work_uri",
         lambda celex, sector="8": "",
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_fetch_sector8_work_uris",
+        lambda celex, sector="8": [],
     )
 
     data = eurlex_scraping._get_case_data_sector6("62024CJ0001", language="EN")
@@ -247,18 +296,26 @@ def test_supplementation_skips_failed_cellar_payload_extracts(monkeypatch):
     _patch_infocuria(monkeypatch, doc_langs=["EN"])
 
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_work_uri",
+        eurlex_scraping,
+        "_fetch_sector8_work_uri",
         lambda celex, sector="8": "http://cellar/uri",
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_items_for_work",
+        eurlex_scraping,
+        "_fetch_sector8_work_uris",
+        lambda celex, sector="8": ["http://cellar/uri"],
+    )
+    monkeypatch.setattr(
+        eurlex_scraping,
+        "_fetch_sector8_items_for_work",
         lambda uri: [
             {"item_url": "http://cellar/de", "format": "xhtml", "language": "DE"},
             {"item_url": "http://cellar/it", "format": "xhtml", "language": "IT"},
         ],
     )
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_subject_labels",
+        eurlex_scraping,
+        "_fetch_sector8_subject_labels",
         lambda uri, language="en": [],
     )
 
@@ -267,9 +324,10 @@ def test_supplementation_skips_failed_cellar_payload_extracts(monkeypatch):
         if "/de" in url:
             return ("german body", "", fmt)
         return ("", "", "")
+
     monkeypatch.setattr(eurlex_scraping, "_extract_item_payload", _fake_extract)
 
     data = eurlex_scraping._get_case_data_sector6("62024CJ0001", language="EN")
 
     langs = sorted(entry["text_language"] for entry in data["fulltexts"])
-    assert langs == ["DE", "EN"]   # IT dropped because the extract was empty
+    assert langs == ["DE", "EN"]  # IT dropped because the extract was empty
