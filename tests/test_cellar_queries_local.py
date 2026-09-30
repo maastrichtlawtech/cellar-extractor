@@ -103,7 +103,9 @@ def test_get_raw_cellar_metadata_filters_requested_eclis(monkeypatch):
             "bindings": [
                 {
                     "ecli": {"value": "ECLI:EU:C:2025:1"},
-                    "p": {"value": "http://publications.europa.eu/ontology/cdm#case-law_ecli"},
+                    "p": {
+                        "value": "http://publications.europa.eu/ontology/cdm#case-law_ecli"
+                    },
                     "o": {"value": "ECLI:EU:C:2025:1"},
                 }
             ]
@@ -215,3 +217,107 @@ def test_get_all_eclis_applies_large_limit_locally_after_chunking(monkeypatch):
 
     assert result == ["ECLI:EU:C:2025:1", "ECLI:EU:C:2025:2", "ECLI:EU:C:2025:3"]
     assert len(fake.queries) == 2
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+def test_infocuria_catalog_paginates_and_normalizes_document_variants(monkeypatch):
+    calls = []
+    pages = [
+        {
+            "totalHits": 3,
+            "searchHits": [
+                {
+                    "content": {
+                        "ecli": "ECLI:EU:F:2011:62",
+                        "celex": "62011FO0005.01",
+                        "docDate": "2011-05-12",
+                        "docTypeCode": "ORDONNANCE",
+                        "idPublished": "F-5/11",
+                    }
+                },
+                {
+                    "content": {
+                        "ecli": "ECLI:EU:C:2011:1",
+                        "celex": "62011CJ0001_SUM",
+                        "docDate": "2011-05-13",
+                    }
+                },
+            ],
+        },
+        {
+            "totalHits": 3,
+            "searchHits": [
+                {
+                    "content": {
+                        "ecli": "ECLI:EU:C:2011:2",
+                        "celex": "62011CO0002",
+                        "docDate": "2011-05-14",
+                        "idPublished": "C-2/11",
+                    }
+                }
+            ],
+        },
+    ]
+
+    def _post(url, json, timeout):
+        calls.append((url, json, timeout))
+        return _FakeResponse(pages[len(calls) - 1])
+
+    monkeypatch.setattr(cellar_queries.requests, "post", _post)
+    monkeypatch.setattr(cellar_queries, "INFOCURIA_PAGE_SIZE", 2)
+
+    result = cellar_queries.get_infocuria_document_metadata(
+        starting_date="2011-05-01",
+        ending_date="2011-05-31",
+    )
+
+    assert set(result) == {"ECLI:EU:F:2011:62", "ECLI:EU:C:2011:2"}
+    assert result["ECLI:EU:F:2011:62"]["resource_legal_id_celex"] == ["62011FO0005(01)"]
+    assert result["ECLI:EU:F:2011:62"]["metadata_catalog_source"] == ["infocuria"]
+    assert result["ECLI:EU:C:2011:2"]["resource_legal_type"] == ["CO"]
+    assert calls[0][1]["pagination"]["from"] == 1
+    assert calls[1][1]["pagination"]["from"] == 3
+    assert calls[0][1]["filtersValue"] == [
+        {"field": "docDate", "values": ["2011-05-01", "2011-05-31"]}
+    ]
+
+
+def test_reconcile_document_metadata_adds_and_overrides_infocuria_identity():
+    cellar = {
+        "ECLI:EU:T:2014:1": {
+            "case-law_ecli": ["ECLI:EU:T:2014:1"],
+            "resource_legal_id_celex": ["62013TO0505(01)"],
+            "work_date_document": ["2014-01-10"],
+            "subject_matter": ["Staff cases"],
+        }
+    }
+    infocuria = {
+        "ECLI:EU:T:2014:1": {
+            "case-law_ecli": ["ECLI:EU:T:2014:1"],
+            "resource_legal_id_celex": ["62013TO0505(02)"],
+            "work_date_document": ["2014-01-10"],
+        },
+        "ECLI:EU:T:2014:166": {
+            "case-law_ecli": ["ECLI:EU:T:2014:166"],
+            "resource_legal_id_celex": ["62013TO0505(03)"],
+            "work_date_document": ["2014-04-02"],
+        },
+    }
+
+    result = cellar_queries.reconcile_document_metadata(cellar, infocuria)
+
+    assert result["ECLI:EU:T:2014:1"]["resource_legal_id_celex"] == ["62013TO0505(02)"]
+    assert result["ECLI:EU:T:2014:1"]["subject_matter"] == ["Staff cases"]
+    assert result["ECLI:EU:T:2014:166"]["resource_legal_id_celex"] == [
+        "62013TO0505(03)"
+    ]

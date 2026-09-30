@@ -130,6 +130,15 @@ def test_sector6_infocuria_returns_fulltexts_list_with_all_languages(monkeypatch
                                             "docTypeCode": "ARRET",
                                         }
                                     },
+                                    {
+                                        "content": {
+                                            "docLang": "IT",
+                                            "docFormats": ["HTML"],
+                                            "logicDocId": "id_unrelated_opinion",
+                                            "idProcedure": "C/0131/24/00000000RP/01/P/01",
+                                            "docTypeCode": "CONCL",
+                                        }
+                                    },
                                 ]
                             }
                         },
@@ -249,7 +258,9 @@ def test_sector6_cellar_fallback_returns_all_languages(monkeypatch):
         {"item_url": "u_it", "format": "xhtml", "language": "IT"},
         {"item_url": "u_fr", "format": "html", "language": "FR"},
     ]
-    monkeypatch.setattr(eurlex_scraping, "_post_json", lambda url, payload, retries=3: [])
+    monkeypatch.setattr(
+        eurlex_scraping, "_post_json", lambda url, payload, retries=3: []
+    )
     monkeypatch.setattr(
         eurlex_scraping, "_fetch_sector8_work_uri", lambda celex, sector="8": work_uri
     )
@@ -357,6 +368,8 @@ def test_build_fulltext_records_normalizes_composite_celex():
             "missing_reasons": "",
         }
     ]
+
+
 def test_build_fulltext_records_falls_back_to_single_when_no_fulltexts_list():
     """Backwards-compat: legacy infocuria_data dicts that don't carry a
     `fulltexts` list (e.g. from a plug-in or stub) still produce exactly

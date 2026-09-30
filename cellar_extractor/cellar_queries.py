@@ -1,6 +1,8 @@
+import re
 import time
 from datetime import date, datetime, timedelta
 
+import requests
 from SPARQLWrapper import SPARQLWrapper, JSON, POST
 
 # Literal placeholder CELLAR emits while a property is awaiting curation;
@@ -13,6 +15,17 @@ MAX_SORTED_TOP_LIMIT = 10000
 ECLI_WINDOW_DAYS = 366
 SPARQL_REQUEST_TIMEOUT_SECONDS = 30
 SPARQL_RETRY_BACKOFF_BASE_SECONDS = 0.5
+INFOCURIA_SEARCH_ENDPOINT = "https://infocuriaws.curia.europa.eu/elastic-connector/search"
+INFOCURIA_PAGE_SIZE = 100
+INFOCURIA_REQUEST_TIMEOUT_SECONDS = 60
+INFOCURIA_IDENTITY_FIELDS = {
+    "case-law_ecli",
+    "resource_legal_id_celex",
+    "work_date_document",
+    "resource_legal_type",
+    "resource_legal_id_sector",
+    "case-law_affaire_number",
+}
 
 
 def _query_with_retries(sparql, retries, error_message):
@@ -155,6 +168,192 @@ def get_all_eclis(starting_date=None, ending_date=None, limit=None, max_retries=
     if limit is not None:
         return eclis[:limit]
     return eclis
+
+
+def _normalize_infocuria_celex(value):
+    """Return a canonical primary-document CELEX from an InfoCuria hit.
+
+    InfoCuria writes numbered document variants as ``.01`` while EUR-Lex and
+    CELLAR use ``(01)``. Derived summary/information works are deliberately
+    rejected instead of being collapsed onto their base CELEX.
+    """
+    if value is None:
+        return ""
+    celex = str(value).replace(" ", "").strip()
+    if celex == "":
+        return ""
+    celex = celex.split(";", 1)[0]
+    if re.search(r"_(?:SUM|RES|INF)$", celex, flags=re.IGNORECASE):
+        return ""
+    celex = re.sub(r"\.(\d{2})$", r"(\1)", celex)
+    if not celex.startswith("6"):
+        return ""
+    return celex
+
+
+def _build_infocuria_search_payload(starting_date, ending_date, page_number, page_size):
+    start = page_number * page_size + 1
+    return {
+        "multiSearchTerms": [],
+        "searchTerm": "",
+        "ecli": "",
+        "publishedId": "",
+        "usualName": "",
+        "logicDocId": "",
+        "repJurExpand": False,
+        "pagination": {
+            "pageNumber": page_number,
+            "pageSize": page_size,
+            "from": start,
+            "to": start + page_size - 1,
+            "origin": "jurisprudence",
+        },
+        "sortTermList": [
+            {
+                "sortDirection": "ASC",
+                "sortTerm": "DOC_DATE",
+                "sortSourceTab": "jurisprudence",
+            }
+        ],
+        "filtersValue": [{"field": "docDate", "values": [starting_date, ending_date]}],
+        "advancedFiltersValue": [],
+        "language": "EN",
+        "isSearchExact": False,
+        "searchSources": ["document", "metadata"],
+        "tabName": "jurisprudence",
+        "isAllTabsRequest": False,
+    }
+
+
+def _query_infocuria_page(payload, max_retries):
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                INFOCURIA_SEARCH_ENDPOINT,
+                json=payload,
+                timeout=INFOCURIA_REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError("InfoCuria search response is not an object")
+            return result
+        except Exception as exc:
+            last_error = exc
+            if attempt < max_retries - 1:
+                time.sleep(SPARQL_RETRY_BACKOFF_BASE_SECONDS * (2**attempt))
+    raise RuntimeError(
+        "Failed to query InfoCuria document catalogue after retries"
+    ) from last_error
+
+
+def _infocuria_metadata_from_hit(hit):
+    content = hit.get("content", {}) if isinstance(hit, dict) else {}
+    if not isinstance(content, dict):
+        return None
+
+    ecli = str(content.get("ecli") or "").strip()
+    celex = _normalize_infocuria_celex(content.get("celex"))
+    document_date = str(content.get("docDate") or "").strip()
+    if not ecli.startswith("ECLI:EU:") or celex == "" or document_date == "":
+        return None
+
+    resource_type = celex[5:7] if len(celex) >= 7 else ""
+    metadata = {
+        "case-law_ecli": [ecli],
+        "resource_legal_id_celex": [celex],
+        "work_date_document": [document_date],
+        "resource_legal_id_sector": [celex[0]],
+        "metadata_catalog_source": ["infocuria"],
+    }
+    if resource_type:
+        metadata["resource_legal_type"] = [resource_type]
+    published_id = str(content.get("idPublished") or "").strip()
+    if published_id:
+        metadata["case-law_affaire_number"] = [published_id]
+    return ecli, metadata
+
+
+def get_infocuria_document_metadata(
+    starting_date=None,
+    ending_date=None,
+    limit=None,
+    max_retries=3,
+):
+    """Enumerate official InfoCuria documents for a date range.
+
+    CELLAR's SPARQL graph does not contain every document that is available
+    through EUR-Lex/InfoCuria, particularly procedural orders. InfoCuria is
+    therefore used as a second catalogue source. Results use the same
+    predicate-map shape as :func:`get_raw_cellar_metadata` so callers can
+    reconcile the sources before normal schema flattening.
+    """
+    metadata = {}
+    for window_start, window_end in _build_ecli_windows(
+        starting_date=starting_date,
+        ending_date=ending_date,
+    ):
+        page_number = 0
+        while True:
+            remaining = None if limit is None else limit - len(metadata)
+            if remaining is not None and remaining <= 0:
+                return metadata
+            page_size = INFOCURIA_PAGE_SIZE
+
+            payload = _build_infocuria_search_payload(
+                str(window_start)[:10],
+                str(window_end)[:10],
+                page_number,
+                page_size,
+            )
+            result = _query_infocuria_page(payload, max_retries=max_retries)
+            hits = result.get("searchHits", [])
+            if not isinstance(hits, list):
+                raise RuntimeError("InfoCuria catalogue returned invalid searchHits")
+
+            for hit in hits:
+                parsed = _infocuria_metadata_from_hit(hit)
+                if parsed is None:
+                    continue
+                ecli, values = parsed
+                # Multiple logical documents can share an ECLI. Their CELEX
+                # identity is normally identical; retaining the first hit is
+                # deterministic because the endpoint is date-sorted.
+                metadata.setdefault(ecli, values)
+                if limit is not None and len(metadata) >= limit:
+                    return metadata
+
+            total_hits = int(result.get("totalHits") or 0)
+            consumed = (page_number + 1) * page_size
+            if not hits or consumed >= total_hits:
+                break
+            page_number += 1
+    return metadata
+
+
+def reconcile_document_metadata(cellar_metadata, infocuria_metadata):
+    """Merge both catalogues, preferring InfoCuria for document identity.
+
+    Rich CELLAR metadata is retained. InfoCuria supplies missing documents
+    and corrects identity fields when CELLAR associates an ECLI with a stale
+    or sibling CELEX work.
+    """
+    reconciled = {
+        ecli: {key: list(values) for key, values in values_by_key.items()}
+        for ecli, values_by_key in (cellar_metadata or {}).items()
+    }
+    for ecli, values_by_key in (infocuria_metadata or {}).items():
+        if ecli not in reconciled:
+            reconciled[ecli] = {
+                key: list(values) for key, values in values_by_key.items()
+            }
+            continue
+        target = reconciled[ecli]
+        for key, values in values_by_key.items():
+            if key in INFOCURIA_IDENTITY_FIELDS or not target.get(key):
+                target[key] = list(values)
+    return reconciled
 
 
 def get_raw_cellar_metadata_by_celex(

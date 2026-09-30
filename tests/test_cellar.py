@@ -25,7 +25,9 @@ def test_get_cellar_csv_in_memory(monkeypatch):
     monkeypatch.setattr(
         cellar,
         "get_all_eclis",
-        lambda starting_date, ending_date, limit=None: ["E1", "E2"][:limit] if limit else ["E1", "E2"],
+        lambda starting_date, ending_date, limit=None: ["E1", "E2"][:limit]
+        if limit
+        else ["E1", "E2"],
     )
     monkeypatch.setattr(
         cellar,
@@ -50,7 +52,9 @@ def test_get_cellar_csv_in_memory(monkeypatch):
 
 
 def test_get_cellar_json_in_memory(monkeypatch):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -71,7 +75,9 @@ def test_get_cellar_json_in_memory(monkeypatch):
 
 def test_get_cellar_json_save_file(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -94,7 +100,9 @@ def test_get_cellar_json_save_file(monkeypatch, tmp_path):
 
 def test_get_cellar_in_memory_does_not_create_default_output_dir(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -113,7 +121,9 @@ def test_get_cellar_in_memory_does_not_create_default_output_dir(monkeypatch, tm
 
 
 def test_get_cellar_save_file_supports_custom_output_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -136,8 +146,12 @@ def test_get_cellar_save_file_supports_custom_output_path(monkeypatch, tmp_path)
     assert result.loc[0, "celex"] == "62025CJ0001"
 
 
-def test_get_cellar_save_to_output_dir_creates_only_requested_parents(monkeypatch, tmp_path):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+def test_get_cellar_save_to_output_dir_creates_only_requested_parents(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",
@@ -189,7 +203,9 @@ def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkey
     monkeypatch.setattr(
         cellar,
         "get_all_eclis",
-        lambda starting_date, ending_date, limit=None: eclis[:limit] if limit else eclis,
+        lambda starting_date, ending_date, limit=None: eclis[:limit]
+        if limit
+        else eclis,
     )
 
     def _fake_get_raw_cellar_metadata(batch):
@@ -206,7 +222,9 @@ def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkey
             for index, ecli in enumerate(batch)
         }
 
-    monkeypatch.setattr(cellar, "get_raw_cellar_metadata", _fake_get_raw_cellar_metadata)
+    monkeypatch.setattr(
+        cellar, "get_raw_cellar_metadata", _fake_get_raw_cellar_metadata
+    )
 
     df = cellar.get_cellar(
         ed="2025-01-02T00:00:00",
@@ -221,10 +239,22 @@ def test_get_cellar_preserves_ecli_order_across_parallel_metadata_batches(monkey
 
 def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
     base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
-    monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
-    def _fake_extra(data, threads, username, password, metadata_output_path=None, fulltext_output_path=None):
+    def _fake_get_cellar(**kwargs):
+        called["reconcile_infocuria"] = kwargs.get("reconcile_infocuria")
+        return base_df
+
+    monkeypatch.setattr(cellar, "get_cellar", _fake_get_cellar)
+
+    def _fake_extra(
+        data,
+        threads,
+        username,
+        password,
+        metadata_output_path=None,
+        fulltext_output_path=None,
+    ):
         called["threads"] = threads
         called["username"] = username
         called["password"] = password
@@ -247,6 +277,7 @@ def test_get_cellar_extra_in_memory_calls_extra(monkeypatch):
     assert len(data) == 1
     assert len(fulltext) == 1
     assert called == {
+        "reconcile_infocuria": True,
         "threads": 4,
         "username": "user",
         "password": "pass",
@@ -260,7 +291,14 @@ def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path)
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
-    def _fake_extra(data, threads, username, password, metadata_output_path=None, fulltext_output_path=None):
+    def _fake_extra(
+        data,
+        threads,
+        username,
+        password,
+        metadata_output_path=None,
+        fulltext_output_path=None,
+    ):
         called["metadata_output_path"] = metadata_output_path
         called["fulltext_output_path"] = fulltext_output_path
         called["threads"] = threads
@@ -278,11 +316,15 @@ def test_get_cellar_extra_save_file_calls_extra_with_path(monkeypatch, tmp_path)
         threads=3,
     )
 
-    assert str(called["metadata_output_path"]).replace("\\", "/").endswith(
-        "data/cellar_extra_2025-01-01_2025-01-02T00_00_00.csv"
+    assert (
+        str(called["metadata_output_path"])
+        .replace("\\", "/")
+        .endswith("data/cellar_extra_2025-01-01_2025-01-02T00_00_00.csv")
     )
-    assert str(called["fulltext_output_path"]).replace("\\", "/").endswith(
-        "data/cellar_extra_2025-01-01_2025-01-02T00_00_00_fulltext.json"
+    assert (
+        str(called["fulltext_output_path"])
+        .replace("\\", "/")
+        .endswith("data/cellar_extra_2025-01-01_2025-01-02T00_00_00_fulltext.json")
     )
     assert called["threads"] == 3
 
@@ -292,7 +334,14 @@ def test_get_cellar_extra_supports_independent_output_paths(monkeypatch, tmp_pat
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
     called = {}
 
-    def _fake_extra(data, threads, username, password, metadata_output_path=None, fulltext_output_path=None):
+    def _fake_extra(
+        data,
+        threads,
+        username,
+        password,
+        metadata_output_path=None,
+        fulltext_output_path=None,
+    ):
         called["metadata_output_path"] = metadata_output_path
         called["fulltext_output_path"] = fulltext_output_path
         return data, [{"celex": "62025CJ0001"}]
@@ -315,7 +364,9 @@ def test_get_cellar_extra_supports_independent_output_paths(monkeypatch, tmp_pat
     assert output[1] == [{"celex": "62025CJ0001"}]
 
 
-def test_get_cellar_extra_in_memory_does_not_create_default_output_dir(monkeypatch, tmp_path):
+def test_get_cellar_extra_in_memory_does_not_create_default_output_dir(
+    monkeypatch, tmp_path
+):
     monkeypatch.chdir(tmp_path)
     base_df = pd.DataFrame({"ecli": ["E1"], "celex": ["62025CJ0001"]})
     monkeypatch.setattr(cellar, "get_cellar", lambda **kwargs: base_df)
@@ -337,7 +388,9 @@ def test_get_cellar_extra_in_memory_does_not_create_default_output_dir(monkeypat
 
 
 def test_get_cellar_save_file_alias_still_works(monkeypatch):
-    monkeypatch.setattr(cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"])
+    monkeypatch.setattr(
+        cellar, "get_all_eclis", lambda starting_date, ending_date, limit=None: ["E1"]
+    )
     monkeypatch.setattr(
         cellar,
         "get_raw_cellar_metadata",

@@ -40,6 +40,51 @@ def test_choose_best_document_prefers_target_language():
     assert selected["logicDocId"] == "id_2"
 
 
+def test_choose_best_document_requires_requested_celex_before_type_priority():
+    docs = [
+        {
+            "content": {
+                "docLang": "EN",
+                "docFormats": ["HTML"],
+                "logicDocId": "id_judgment",
+                "idProcedure": "C/0444/11/00000000RP/01/P/01",
+                "docTypeCode": "ARRET",
+                "celex": "62011CJ0444",
+            }
+        },
+        {
+            "content": {
+                "docLang": "EN",
+                "docFormats": ["HTML"],
+                "logicDocId": "id_order",
+                "idProcedure": "C/0444/11/00000000RP/01/P/01",
+                "docTypeCode": "ORDONNANCE",
+                "celex": "62011CO0444",
+            }
+        },
+    ]
+
+    selected = eurlex_scraping._choose_best_document(
+        docs,
+        language="EN",
+        celex="62011CO0444",
+    )
+
+    assert selected["logicDocId"] == "id_order"
+    assert (
+        eurlex_scraping._choose_best_document(
+            docs,
+            language="EN",
+            celex="62011CC0444",
+        )
+        is None
+    )
+
+
+def test_normalize_celex_converts_infocuria_dot_variant():
+    assert eurlex_scraping.normalize_celex("62011FO0005.01") == "62011FO0005(01)"
+
+
 def test_extract_summary_from_documents_prefers_summary_marker():
     docs = [
         {
@@ -103,9 +148,13 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
                         "content": {
                             "matCodeML": [{"label": [{"en": "Environment"}]}],
                             "matCode": ["ENVI"],
-                            "advocateML": [{"code": "KOK", "label": [{"en": "Kokott"}]}],
+                            "advocateML": [
+                                {"code": "KOK", "label": [{"en": "Kokott"}]}
+                            ],
                             "avg": "KOK",
-                            "reportingJudgeML": [{"code": "SGE", "label": [{"en": "Spielmann"}]}],
+                            "reportingJudgeML": [
+                                {"code": "SGE", "label": [{"en": "Spielmann"}]}
+                            ],
                             "reportingJudge": "SGE",
                             "joinAffairs": ["C-2/20"],
                             "procedureResultTypeML": [{"label": [{"en": "Judgment"}]}],
@@ -158,7 +207,8 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
     # noops — supplementation behaviour itself is covered in
     # test_sector6_cellar_supplement.py.
     monkeypatch.setattr(
-        eurlex_scraping, "_fetch_sector8_work_uri",
+        eurlex_scraping,
+        "_fetch_sector8_work_uri",
         lambda celex, sector="8": "",
     )
 

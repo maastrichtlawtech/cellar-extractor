@@ -4,7 +4,12 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 from cellar_extractor.cellar_extra_extract import extra_cellar
-from cellar_extractor.cellar_queries import get_all_eclis, get_raw_cellar_metadata
+from cellar_extractor.cellar_queries import (
+    get_all_eclis,
+    get_infocuria_document_metadata,
+    get_raw_cellar_metadata,
+    reconcile_document_metadata,
+)
 from cellar_extractor.json_to_csv import json_to_csv_returning
 from cellar_extractor.nodes_and_edges import get_nodes_and_edges
 from cellar_extractor.persistence import (
@@ -70,6 +75,7 @@ def get_cellar(
     output_path=None,
     return_data=None,
     save=None,
+    reconcile_infocuria=False,
 ):
     """
     Fetch base CELLAR metadata.
@@ -91,10 +97,24 @@ def get_cellar(
     logging.info(f"Up until the specified end date {ed}")
     eclis = get_all_eclis(starting_date=sd, ending_date=ed, limit=max_ecli)
     logging.info(f"Found {len(eclis)} ECLIs")
-    if len(eclis) == 0:
+    all_eclis = _fetch_metadata_batches(eclis)
+    if reconcile_infocuria:
+        infocuria_metadata = get_infocuria_document_metadata(
+            starting_date=sd,
+            ending_date=ed,
+            limit=max_ecli,
+        )
+        logging.info(
+            "Found %s ECLIs in the InfoCuria document catalogue",
+            len(infocuria_metadata),
+        )
+        all_eclis = reconcile_document_metadata(all_eclis, infocuria_metadata)
+        if max_ecli is not None and len(all_eclis) > max_ecli:
+            all_eclis = dict(list(all_eclis.items())[:max_ecli])
+
+    if len(all_eclis) == 0:
         logging.info(f"No data to download found between {sd} and {ed}")
         return False
-    all_eclis = _fetch_metadata_batches(eclis)
 
     result = _materialize_cellar_output(all_eclis, file_format)
     if save_enabled:
@@ -136,7 +156,14 @@ def get_cellar_extra(
     if not ed:
         ed = datetime.now().isoformat(timespec="seconds")
     save_enabled = resolve_save_enabled(save=save, save_file=save_file, default=True)
-    data = get_cellar(ed=ed, save=False, max_ecli=max_ecli, sd=sd, file_format="csv")
+    data = get_cellar(
+        ed=ed,
+        save=False,
+        max_ecli=max_ecli,
+        sd=sd,
+        file_format="csv",
+        reconcile_infocuria=True,
+    )
     if data is False:
         logging.warning("Cellar extraction unsuccessful")
         return False, False
