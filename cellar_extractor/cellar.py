@@ -6,6 +6,7 @@ from tqdm import tqdm
 from cellar_extractor.cellar_extra_extract import extra_cellar
 from cellar_extractor.cellar_queries import (
     get_all_eclis,
+    get_cellar_celex_owners,
     get_infocuria_document_metadata,
     get_raw_cellar_metadata,
     reconcile_document_metadata,
@@ -108,7 +109,27 @@ def get_cellar(
             "Found %s ECLIs in the InfoCuria document catalogue",
             len(infocuria_metadata),
         )
-        all_eclis = reconcile_document_metadata(all_eclis, infocuria_metadata)
+        # CELLAR's date-windowed enumeration misses documents it files under a
+        # different date; look those ECLIs up directly before treating them
+        # as InfoCuria-only.
+        unmatched = [ecli for ecli in infocuria_metadata if ecli not in all_eclis]
+        if unmatched:
+            found = {
+                ecli: values
+                for ecli, values in _fetch_metadata_batches(unmatched).items()
+                if values
+            }
+            logging.info(
+                "Resolved %s of %s InfoCuria-only ECLIs through CELLAR",
+                len(found),
+                len(unmatched),
+            )
+            all_eclis.update(found)
+        all_eclis = reconcile_document_metadata(
+            all_eclis,
+            infocuria_metadata,
+            celex_owners=get_cellar_celex_owners,
+        )
         if max_ecli is not None and len(all_eclis) > max_ecli:
             all_eclis = dict(list(all_eclis.items())[:max_ecli])
 

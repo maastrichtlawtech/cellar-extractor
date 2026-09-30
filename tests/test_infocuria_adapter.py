@@ -227,3 +227,67 @@ def test_get_case_data_by_celex_id_builds_blob_request(monkeypatch):
     assert data["missing_reasons"] == ""
     assert "316845-EN-1.html" in requested_urls[0]
     eurlex_scraping._get_case_data_cached.cache_clear()
+
+
+
+def test_choose_best_document_selects_catalogued_document_id():
+    docs = [
+        {"content": {"logicDocId": "id_60942", "idProcedure": "C/0193/07/R", "docFormats": ["HTML"],
+                     "celex": "62007CO0193", "docTypeCode": "ORD_NP", "docLang": "EN"}},
+        {"content": {"logicDocId": "id_60821", "idProcedure": "C/0193/07/P", "docFormats": ["HTML"],
+                     "celex": "62007CO0193", "docTypeCode": "ORD_NP", "docLang": "EN"}},
+    ]
+
+    selected = eurlex_scraping._choose_best_document(docs, language="EN", document_id="id_60821")
+    missing = eurlex_scraping._choose_best_document(docs, language="EN", document_id="60000")
+
+    assert selected["logicDocId"] == "id_60821"
+    assert missing is None
+
+
+def test_sector6_without_confirmed_celex_never_queries_cellar(monkeypatch):
+    def _no_cellar(*args, **kwargs):
+        raise AssertionError("CELLAR must not be queried")
+
+    monkeypatch.setattr(eurlex_scraping, "_post_json", lambda url, payload, retries=3: [])
+    monkeypatch.setattr(eurlex_scraping, "_get_case_data_sector6_cellar_fallback", _no_cellar)
+    monkeypatch.setattr(eurlex_scraping, "_fetch_sector8_items_for_celex", _no_cellar)
+
+    assert eurlex_scraping._get_case_data_sector6(
+        "62007CO0193", language="EN", document_id="id_60821", use_cellar=False
+    ) is None
+
+
+def test_sector6_finds_document_in_any_procedure_root(monkeypatch):
+    roots = {
+        "searchHits": [
+            {"content": {}, "innerHits": {"document": {"searchHits": [
+                {"content": {"logicDocId": "id_70803", "idProcedure": "C/0193/07/00000000RD/01/P/01",
+                             "docFormats": ["HTML"], "docLang": "FR", "docTypeCode": "ORD_NP"}}]}}},
+            {"content": {}, "innerHits": {"document": {"searchHits": [
+                {"content": {"logicDocId": "id_60942", "idProcedure": "C/0193/07/00000000RD/01/R/01",
+                             "docFormats": ["HTML"], "docLang": "FR", "docTypeCode": "ORD_NP"}}]}}},
+        ]
+    }
+
+    def _post(url, payload, retries=3):
+        if url == eurlex_scraping.INFOCURIA_SUGGEST:
+            return [{"procedureDocInfo": {"idPublished": "C-193/07", "id": "C/0193/07/00000000RD/01/P/01-1"}}]
+        return roots
+
+    requested = []
+
+    class _Session:
+        def get(self, url, timeout):
+            requested.append(url)
+            return type("R", (), {"status_code": 404, "text": ""})()
+
+    monkeypatch.setattr(eurlex_scraping, "_post_json", _post)
+    monkeypatch.setattr(eurlex_scraping, "_get_http_session", lambda: _Session())
+    monkeypatch.setattr(eurlex_scraping, "_pace_requests", lambda *a, **k: None)
+
+    eurlex_scraping._get_case_data_sector6(
+        "62007CO0193", language="EN", document_id="id_60942", use_cellar=False
+    )
+
+    assert requested and "60942-FR" in requested[0]

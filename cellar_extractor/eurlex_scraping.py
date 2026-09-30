@@ -815,7 +815,7 @@ def _collect_affecting_ids(content):
     return ids
 
 
-def _choose_best_document(doc_hits, language="EN", celex=None):
+def _choose_best_document(doc_hits, language="EN", celex=None, document_id=None):
     candidates = []
     for hit in doc_hits or []:
         content = hit.get("content", {}) if isinstance(hit, dict) else {}
@@ -827,6 +827,18 @@ def _choose_best_document(doc_hits, language="EN", celex=None):
         candidates.append(content)
     if len(candidates) == 0:
         return None
+
+    if document_id:
+        # The catalogue identified the exact logical document; sibling orders
+        # in the same procedure often share its CELEX, so never guess.
+        wanted = str(document_id).replace("id_", "")
+        candidates = [
+            doc
+            for doc in candidates
+            if str(doc.get("logicDocId", "")).replace("id_", "") == wanted
+        ]
+        if len(candidates) == 0:
+            return None
 
     normalized_target = _normalize_celex(celex) if celex else ""
     if normalized_target:
@@ -993,7 +1005,20 @@ def _get_case_data_sector6_cellar_fallback(celex, language="EN"):
     }
 
 
-def _get_case_data_sector6(celex, language="EN"):
+def _procedure_documents(hit):
+    if not isinstance(hit, dict):
+        return []
+    return hit.get("innerHits", {}).get("document", {}).get("searchHits", [])
+
+
+def _sector6_fallback(normalized, language, use_cellar):
+    """CELLAR fallback, skipped when the CELEX is not a confirmed identity."""
+    if not use_cellar:
+        return None
+    return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+
+
+def _get_case_data_sector6(celex, language="EN", document_id=None, use_cellar=True):
     normalized = _normalize_celex(celex)
     if not normalized.startswith("6"):
         return None
@@ -1001,7 +1026,7 @@ def _get_case_data_sector6(celex, language="EN"):
     if published_id == "":
         # Even a malformed CELEX could still match a CELLAR record; let the
         # fallback try before bailing.
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     suggest_payload = {
         "searchTerm": published_id,
@@ -1010,7 +1035,7 @@ def _get_case_data_sector6(celex, language="EN"):
     }
     suggest_response = _post_json(INFOCURIA_SUGGEST, suggest_payload)
     if not isinstance(suggest_response, list) or len(suggest_response) == 0:
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     procedure_info = None
     for item in suggest_response:
@@ -1022,11 +1047,11 @@ def _get_case_data_sector6(celex, language="EN"):
         procedure_info = suggest_response[0].get("procedureDocInfo", {})
 
     if not isinstance(procedure_info, dict) or procedure_info.get("id") is None:
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     aff_id, _ = _extract_aff_id_from_suggest_identifier(procedure_info["id"])
     if aff_id == "":
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     procedures_payload = {
         "affId": aff_id,
@@ -1037,22 +1062,32 @@ def _get_case_data_sector6(celex, language="EN"):
     procedures = _post_json(INFOCURIA_PROCEDURES, procedures_payload)
     hits = procedures.get("searchHits", []) if isinstance(procedures, dict) else []
     if len(hits) == 0:
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     root_hit = hits[0]
+    if document_id:
+        # A case's sub-procedures (main action, interim relief "R", ...) come
+        # back as separate root hits; the catalogued document can sit in any.
+        root_hit = next(
+            (
+                hit
+                for hit in hits
+                if _choose_best_document(
+                    _procedure_documents(hit), language=language, document_id=document_id
+                )
+            ),
+            root_hit,
+        )
     root_content = root_hit.get("content", {}) if isinstance(root_hit, dict) else {}
-    documents = (
-        root_hit.get("innerHits", {}).get("document", {}).get("searchHits", [])
-        if isinstance(root_hit, dict)
-        else []
-    )
+    documents = _procedure_documents(root_hit)
     selected_doc = _choose_best_document(
         documents,
         language=language,
-        celex=normalized,
+        celex=None if document_id else normalized,
+        document_id=document_id,
     )
     if selected_doc is None:
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
 
     summary_from_documents = _extract_summary_from_documents(documents, language="en")
 
@@ -1060,7 +1095,7 @@ def _get_case_data_sector6(celex, language="EN"):
     id_procedure = selected_doc["idProcedure"]
     proc_parts = id_procedure.split("/")
     if len(proc_parts) < 3:
-        return _get_case_data_sector6_cellar_fallback(normalized, language=language)
+        return _sector6_fallback(normalized, language, use_cellar)
     jurisdiction = proc_parts[0]
     year = proc_parts[2]
     year = f"20{year}" if len(year) == 2 else year
@@ -1202,7 +1237,11 @@ def _get_case_data_sector6(celex, language="EN"):
     # All-in-one try/except: a CELLAR-side failure must never kill the
     # InfoCuria-sourced row we already built.
     try:
-        _, cellar_candidates = _fetch_sector8_items_for_celex(normalized, sector="6")
+        _, cellar_candidates = (
+            _fetch_sector8_items_for_celex(normalized, sector="6")
+            if use_cellar
+            else ([], [])
+        )
         if cellar_candidates:
             cellar_fulltexts = _fanout_fulltexts_from_candidates(
                 cellar_candidates, source_label="CELLAR_ITEM"
@@ -1261,12 +1300,17 @@ def _get_case_data_sector6(celex, language="EN"):
 
 
 @lru_cache(maxsize=2048)
-def _get_case_data_cached(celex, language="EN"):
+def _get_case_data_cached(celex, language="EN", document_id=None, use_cellar=True):
     normalized = _normalize_celex(celex)
     if normalized == "":
         return None
     if normalized.startswith("6"):
-        return _get_case_data_sector6(normalized, language=language)
+        return _get_case_data_sector6(
+            normalized,
+            language=language,
+            document_id=document_id,
+            use_cellar=use_cellar,
+        )
     if normalized.startswith("8"):
         return _get_case_data_sector8(normalized, language=language)
     if normalized.startswith("3") or normalized.startswith("0"):
@@ -1274,12 +1318,24 @@ def _get_case_data_cached(celex, language="EN"):
     return None
 
 
-def get_case_data_by_celex_id(celex, language="EN"):
+def get_case_data_by_celex_id(celex, language="EN", document_id=None, use_cellar=True):
+    """Fetch metadata and full texts for a document.
+
+    ``document_id`` is InfoCuria's ``logicDocId``; when given, the InfoCuria
+    document is selected by it instead of by CELEX. ``use_cellar=False``
+    skips every CELLAR lookup, for documents whose CELEX is only InfoCuria's
+    procedure-level placeholder.
+    """
     try:
         normalized = _normalize_celex(celex)
         if normalized == "":
             return None
-        return _get_case_data_cached(normalized, language=language.upper())
+        return _get_case_data_cached(
+            normalized,
+            language=language.upper(),
+            document_id=document_id or None,
+            use_cellar=use_cellar,
+        )
     except Exception:
         return None
 

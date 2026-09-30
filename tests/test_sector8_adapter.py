@@ -7,12 +7,12 @@ def test_case_data_dispatches_by_sector(monkeypatch):
     monkeypatch.setattr(
         eurlex_scraping,
         "_get_case_data_sector6",
-        lambda celex, language="EN": {"sector": "6", "celex": celex},
+        lambda celex, language="EN", **kwargs: {"sector": "6", "celex": celex},
     )
     monkeypatch.setattr(
         eurlex_scraping,
         "_get_case_data_sector8",
-        lambda celex, language="EN": {"sector": "8", "celex": celex},
+        lambda celex, language="EN", **kwargs: {"sector": "8", "celex": celex},
     )
 
     data6 = eurlex_scraping.get_case_data_by_celex_id("62024CJ0131", language="EN")
