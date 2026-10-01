@@ -292,12 +292,12 @@ def test_infocuria_catalog_paginates_and_normalizes_document_variants(monkeypatc
     ]
 
 
-def test_reconcile_document_metadata_adds_and_overrides_infocuria_identity():
+def test_reconcile_document_metadata_keeps_cellar_identity_and_adds_locator():
     cellar = {
         "ECLI:EU:T:2014:1": {
             "case-law_ecli": ["ECLI:EU:T:2014:1"],
             "resource_legal_id_celex": ["62013TO0505(01)"],
-            "work_date_document": ["2014-01-10"],
+            "work_date_document": ["2014-01-08"],
             "subject_matter": ["Staff cases"],
         }
     }
@@ -305,19 +305,115 @@ def test_reconcile_document_metadata_adds_and_overrides_infocuria_identity():
         "ECLI:EU:T:2014:1": {
             "case-law_ecli": ["ECLI:EU:T:2014:1"],
             "resource_legal_id_celex": ["62013TO0505(02)"],
-            "work_date_document": ["2014-01-10"],
+            "work_date_document": ["2014-01-08"],
+            "metadata_catalog_source": ["infocuria"],
+            "infocuria_celex": ["62013TO0505(02)"],
+            "infocuria_document_id": ["id_146181"],
+            "judge": ["Rapporteur"],
         },
         "ECLI:EU:T:2014:166": {
             "case-law_ecli": ["ECLI:EU:T:2014:166"],
             "resource_legal_id_celex": ["62013TO0505(03)"],
-            "work_date_document": ["2014-04-02"],
+            "work_date_document": ["2014-03-19"],
+            "infocuria_document_id": ["id_150082"],
         },
     }
 
-    result = cellar_queries.reconcile_document_metadata(cellar, infocuria)
+    result = cellar_queries.reconcile_document_metadata(
+        cellar, infocuria, celex_owners=lambda celex: set()
+    )
 
-    assert result["ECLI:EU:T:2014:1"]["resource_legal_id_celex"] == ["62013TO0505(02)"]
-    assert result["ECLI:EU:T:2014:1"]["subject_matter"] == ["Staff cases"]
-    assert result["ECLI:EU:T:2014:166"]["resource_legal_id_celex"] == [
-        "62013TO0505(03)"
-    ]
+    known = result["ECLI:EU:T:2014:1"]
+    assert known["resource_legal_id_celex"] == ["62013TO0505(01)"]
+    assert known["work_date_document"] == ["2014-01-08"]
+    assert known["subject_matter"] == ["Staff cases"]
+    assert known["judge"] == ["Rapporteur"]
+    assert known["infocuria_document_id"] == ["id_146181"]
+    assert known["metadata_catalog_source"] == ["infocuria"]
+    assert known["identity_source"] == ["cellar"]
+    only = result["ECLI:EU:T:2014:166"]
+    assert only["resource_legal_id_celex"] == ["62013TO0505(03)"]
+    assert only["identity_source"] == ["infocuria"]
+
+
+def test_reconcile_document_metadata_drops_ambiguous_infocuria_celex():
+    cellar = {
+        "ECLI:EU:C:2014:10": {
+            "case-law_ecli": ["ECLI:EU:C:2014:10"],
+            "resource_legal_id_celex": ["62013CO0072"],
+        }
+    }
+
+    def _only(ecli, celex, document_id):
+        return {
+            "case-law_ecli": [ecli],
+            "resource_legal_id_celex": [celex],
+            "resource_legal_type": ["CO"],
+            "infocuria_celex": [celex],
+            "infocuria_document_id": [document_id],
+        }
+
+    infocuria = {
+        # Shares its procedure CELEX with a document CELLAR knows.
+        "ECLI:EU:C:2015:1": _only("ECLI:EU:C:2015:1", "62013CO0072", "id_1"),
+        # Two unpublished orders in one case, both labelled with the case CELEX.
+        "ECLI:EU:C:2007:218": _only("ECLI:EU:C:2007:218", "62007CO0193", "id_2"),
+        "ECLI:EU:C:2007:465": _only("ECLI:EU:C:2007:465", "62007CO0193", "id_3"),
+        # Claimed by an ECLI CELLAR binds outside this window.
+        "ECLI:EU:C:2016:1": _only("ECLI:EU:C:2016:1", "62016CO0001", "id_4"),
+        # Unambiguous: kept.
+        "ECLI:EU:C:2013:656": _only("ECLI:EU:C:2013:656", "62011CO0444", "id_5"),
+    }
+    owners = {"62016CO0001": {"ECLI:EU:C:2016:99"}}
+
+    result = cellar_queries.reconcile_document_metadata(
+        cellar, infocuria, celex_owners=lambda celex: owners.get(celex, set())
+    )
+
+    for ecli in (
+        "ECLI:EU:C:2015:1",
+        "ECLI:EU:C:2007:218",
+        "ECLI:EU:C:2007:465",
+        "ECLI:EU:C:2016:1",
+    ):
+        assert "resource_legal_id_celex" not in result[ecli]
+        assert "resource_legal_type" not in result[ecli]
+        assert result[ecli]["infocuria_document_id"]
+    assert result["ECLI:EU:C:2014:10"]["resource_legal_id_celex"] == ["62013CO0072"]
+    assert result["ECLI:EU:C:2013:656"]["resource_legal_id_celex"] == ["62011CO0444"]
+
+
+def test_infocuria_celex_tokens_split_listed_values():
+    assert cellar_queries._infocuria_celex_tokens(
+        "62013CC0439 62013CC0439.01"
+    ) == ["62013CC0439", "62013CC0439(01)"]
+    assert cellar_queries._normalize_infocuria_celex("62013CC0439 62013CC0439.01") == ""
+    assert cellar_queries._normalize_infocuria_celex("62011FO0005.01") == "62011FO0005(01)"
+    assert cellar_queries._infocuria_celex_tokens("62011CJ0001_SUM") == []
+
+
+def test_infocuria_catalog_prefers_decision_over_information_notice(monkeypatch):
+    hit = {
+        "ecli": "ECLI:EU:C:2015:632",
+        "celex": "62015CO0001",
+        "docDate": "2015-09-21",
+        "idProcedure": "C/0001/15/00000000SA/01/P/01",
+    }
+    page = {
+        "totalHits": 2,
+        "searchHits": [
+            {"content": {**hit, "docType": "Ordonnance (Information)", "logicDocId": "id_181188"}},
+            {"content": {**hit, "docType": "Ordonnance", "logicDocId": "id_169861"}},
+        ],
+    }
+    monkeypatch.setattr(
+        cellar_queries.requests, "post", lambda url, json, timeout: _FakeResponse(page)
+    )
+
+    result = cellar_queries.get_infocuria_document_metadata(
+        starting_date="2015-09-01", ending_date="2015-09-30"
+    )
+
+    record = result["ECLI:EU:C:2015:632"]
+    assert record["infocuria_document_id"] == ["id_169861"]
+    assert record["infocuria_procedure_id"] == ["C/0001/15/00000000SA/01/P/01"]

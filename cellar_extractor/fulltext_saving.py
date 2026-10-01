@@ -103,6 +103,57 @@ def _build_fulltext_records(infocuria_data, celex, ecli, missing_reasons_value):
     return out
 
 
+def _clean_value(value):
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"nan", "none", "<na>"} else text
+
+
+def _row_value(data, column, position):
+    if column not in data.columns:
+        return ""
+    return _clean_value(data[column].iloc[position])
+
+
+def _fetch_context(celex, infocuria_celex="", document_id="", identity_source=""):
+    """Decide how to fetch one row's texts.
+
+    A CELLAR-backed CELEX is fetched normally, with InfoCuria's document id
+    (when known) pinning the exact logical document. A document known only to
+    InfoCuria is fetched strictly by document id, with every CELLAR and
+    EUR-Lex lookup disabled: its CELEX is at best InfoCuria's procedure-level
+    label, under which EUR-Lex serves a sibling document.
+    """
+    confirmed = _clean_value(celex)
+    document_id = _clean_value(document_id)
+    if _clean_value(identity_source) == "infocuria":
+        procedure_celex = confirmed or _clean_value(infocuria_celex).split(";", 1)[0]
+        return {
+            "celex": confirmed,
+            "lookup_celex": procedure_celex if document_id else "",
+            "document_id": document_id or None,
+            "use_cellar": False,
+        }
+    if confirmed:
+        return {
+            "celex": confirmed,
+            "lookup_celex": confirmed,
+            "document_id": document_id or None,
+            "use_cellar": True,
+        }
+    procedure_celex = _clean_value(infocuria_celex).split(";", 1)[0]
+    return {
+        "celex": "",
+        "lookup_celex": procedure_celex if document_id else "",
+        "document_id": document_id or None,
+        "use_cellar": False,
+    }
+
+
 def execute_sections_threads(
     celex,
     eclis,
@@ -122,6 +173,7 @@ def execute_sections_threads(
     list_summary_source,
     list_missing_reasons,
     progress_bar,
+    contexts=None,
 ):
     """
     This is the method executed by individual threads by the add_sections
@@ -149,7 +201,42 @@ def execute_sections_threads(
         row_index = source_indices[j]
         _id = celex.iloc[i]
         ecli = eclis.iloc[i]
-        infocuria_data = get_case_data_by_celex_id(_id, language="EN")
+        context = contexts[i] if contexts is not None else _fetch_context(_id)
+        if context["lookup_celex"] == "":
+            reasons_value = "IDENTITY_UNRESOLVED;UNAVAILABLE_UPSTREAM"
+            missing_reasons[row_index] = reasons_value
+            full.extend(
+                _build_fulltext_records(
+                    {"fulltexts": []},
+                    celex=context["celex"],
+                    ecli=ecli,
+                    missing_reasons_value=reasons_value,
+                )
+            )
+            progress_bar.update(1)
+            continue
+        _id = context["celex"]
+        infocuria_data = get_case_data_by_celex_id(
+            context["lookup_celex"],
+            language="EN",
+            document_id=context["document_id"],
+            use_cellar=context["use_cellar"],
+        )
+        if not infocuria_data and not context["use_cellar"]:
+            # The CELEX is only InfoCuria's procedure placeholder; the legacy
+            # EUR-Lex lookup below would return a sibling document.
+            reasons_value = "FULLTEXT_UNAVAILABLE_UPSTREAM;UNAVAILABLE_UPSTREAM"
+            missing_reasons[row_index] = reasons_value
+            full.extend(
+                _build_fulltext_records(
+                    {"fulltexts": []},
+                    celex=_id,
+                    ecli=ecli,
+                    missing_reasons_value=reasons_value,
+                )
+            )
+            progress_bar.update(1)
+            continue
         if infocuria_data:
             text = infocuria_data.get("text", "")
             if text == "":
@@ -326,6 +413,15 @@ def add_sections(
     source_indices = data.index.tolist()
     celex = data.loc[:, "celex"].reset_index(drop=True)
     eclis = data.loc[:, "ecli"].reset_index(drop=True)
+    contexts = [
+        _fetch_context(
+            celex.iloc[position],
+            infocuria_celex=_row_value(data, "infocuria_celex", position),
+            document_id=_row_value(data, "infocuria_document_id", position),
+            identity_source=_row_value(data, "identity_source", position),
+        )
+        for position in range(len(celex))
+    ]
     length = celex.size
     time.sleep(1)
     _bar = tqdm(
@@ -357,6 +453,7 @@ def add_sections(
         curr_ecli = eclis[i : (i + at_once_threads)]
         t = threading.Thread(
             target=execute_sections_threads,
+            kwargs={"contexts": contexts[i : (i + at_once_threads)]},
             args=(
                 curr_celex,
                 curr_ecli,

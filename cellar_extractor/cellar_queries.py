@@ -170,25 +170,33 @@ def get_all_eclis(starting_date=None, ending_date=None, limit=None, max_retries=
     return eclis
 
 
-def _normalize_infocuria_celex(value):
-    """Return a canonical primary-document CELEX from an InfoCuria hit.
+CELEX_PATTERN = re.compile(r"^6\d{4}[A-Z]{1,2}\d{4}(?:\(\d{2}\))?$")
+
+
+def _infocuria_celex_tokens(value):
+    """Return the distinct canonical CELEX values listed in an InfoCuria hit.
 
     InfoCuria writes numbered document variants as ``.01`` while EUR-Lex and
-    CELLAR use ``(01)``. Derived summary/information works are deliberately
-    rejected instead of being collapsed onto their base CELEX.
+    CELLAR use ``(01)``, and some hits list several CELEX values separated by
+    whitespace or ``;``. Derived summary/information works are dropped
+    instead of being collapsed onto their base CELEX.
     """
     if value is None:
-        return ""
-    celex = str(value).replace(" ", "").strip()
-    if celex == "":
-        return ""
-    celex = celex.split(";", 1)[0]
-    if re.search(r"_(?:SUM|RES|INF)$", celex, flags=re.IGNORECASE):
-        return ""
-    celex = re.sub(r"\.(\d{2})$", r"(\1)", celex)
-    if not celex.startswith("6"):
-        return ""
-    return celex
+        return []
+    tokens = []
+    for raw in re.split(r"[\s;,]+", str(value).strip()):
+        if raw == "" or re.search(r"_(?:SUM|RES|INF)$", raw, flags=re.IGNORECASE):
+            continue
+        celex = re.sub(r"\.(\d{2})$", r"(\1)", raw)
+        if CELEX_PATTERN.match(celex) and celex not in tokens:
+            tokens.append(celex)
+    return tokens
+
+
+def _normalize_infocuria_celex(value):
+    """Return the hit's CELEX when it names exactly one primary document."""
+    tokens = _infocuria_celex_tokens(value)
+    return tokens[0] if len(tokens) == 1 else ""
 
 
 def _build_infocuria_search_payload(starting_date, ending_date, page_number, page_size):
@@ -254,25 +262,39 @@ def _infocuria_metadata_from_hit(hit):
         return None
 
     ecli = str(content.get("ecli") or "").strip()
-    celex = _normalize_infocuria_celex(content.get("celex"))
+    tokens = _infocuria_celex_tokens(content.get("celex"))
     document_date = str(content.get("docDate") or "").strip()
-    if not ecli.startswith("ECLI:EU:") or celex == "" or document_date == "":
+    if not ecli.startswith("ECLI:EU:") or not tokens or document_date == "":
         return None
 
-    resource_type = celex[5:7] if len(celex) >= 7 else ""
+    celex = tokens[0] if len(tokens) == 1 else ""
     metadata = {
         "case-law_ecli": [ecli],
-        "resource_legal_id_celex": [celex],
         "work_date_document": [document_date],
-        "resource_legal_id_sector": [celex[0]],
+        "resource_legal_id_sector": ["6"],
         "metadata_catalog_source": ["infocuria"],
+        # InfoCuria's CELEX is often the procedure's, shared by every order
+        # in a case, so it is kept separately from the document identity.
+        "infocuria_celex": [";".join(tokens)],
     }
-    if resource_type:
-        metadata["resource_legal_type"] = [resource_type]
-    published_id = str(content.get("idPublished") or "").strip()
-    if published_id:
-        metadata["case-law_affaire_number"] = [published_id]
+    if celex:
+        metadata["resource_legal_id_celex"] = [celex]
+        metadata["resource_legal_type"] = [celex[5:7]]
+    for field, key in (
+        ("infocuria_document_id", "logicDocId"),
+        ("infocuria_procedure_id", "idProcedure"),
+        ("infocuria_document_type", "docType"),
+        ("case-law_affaire_number", "idPublished"),
+    ):
+        value = str(content.get(key) or "").strip()
+        if value:
+            metadata[field] = [value]
     return ecli, metadata
+
+
+def _is_information_notice(metadata):
+    document_type = (metadata.get("infocuria_document_type") or [""])[0]
+    return "information" in document_type.lower()
 
 
 def get_infocuria_document_metadata(
@@ -317,10 +339,15 @@ def get_infocuria_document_metadata(
                 if parsed is None:
                     continue
                 ecli, values = parsed
-                # Multiple logical documents can share an ECLI. Their CELEX
-                # identity is normally identical; retaining the first hit is
-                # deterministic because the endpoint is date-sorted.
-                metadata.setdefault(ecli, values)
+                # Multiple logical documents can share an ECLI, typically a
+                # decision and its "(Information)" notice. Keep the decision;
+                # otherwise the first hit, which is deterministic because the
+                # endpoint is date-sorted.
+                if ecli not in metadata or (
+                    _is_information_notice(metadata[ecli])
+                    and not _is_information_notice(values)
+                ):
+                    metadata[ecli] = values
                 if limit is not None and len(metadata) >= limit:
                     return metadata
 
@@ -332,28 +359,103 @@ def get_infocuria_document_metadata(
     return metadata
 
 
-def reconcile_document_metadata(cellar_metadata, infocuria_metadata):
-    """Merge both catalogues, preferring InfoCuria for document identity.
+INFOCURIA_LOCATOR_FIELDS = (
+    "metadata_catalog_source",
+    "infocuria_celex",
+    "infocuria_document_id",
+    "infocuria_procedure_id",
+    "infocuria_document_type",
+)
 
-    Rich CELLAR metadata is retained. InfoCuria supplies missing documents
-    and corrects identity fields when CELLAR associates an ECLI with a stale
-    or sibling CELEX work.
+
+def _first_celex(values_by_key):
+    values = values_by_key.get("resource_legal_id_celex") or []
+    for value in values:
+        celex = str(value).split(";", 1)[0].split("_", 1)[0].strip()
+        if celex:
+            return celex
+    return ""
+
+
+def reconcile_document_metadata(
+    cellar_metadata, infocuria_metadata, celex_owners=None
+):
+    """Merge both catalogues without letting InfoCuria rewrite CELLAR identity.
+
+    CELEX is EUR-Lex's identifier and CELLAR is its store, so an ECLI CELLAR
+    knows keeps CELLAR's identity; InfoCuria only adds its document locator
+    and fills empty fields. InfoCuria's CELEX is often the procedure's rather
+    than the document's (every order in a case shares it), so documents known
+    only to InfoCuria keep it only when it is unambiguous: not claimed by
+    another ECLI in CELLAR (``celex_owners(celex) -> set of ECLIs``) and not
+    shared with another document in this batch. Otherwise the document keeps
+    no CELEX, and callers fetch its text through ``infocuria_document_id``.
     """
     reconciled = {
         ecli: {key: list(values) for key, values in values_by_key.items()}
         for ecli, values_by_key in (cellar_metadata or {}).items()
     }
+    for ecli in reconciled:
+        reconciled[ecli]["identity_source"] = ["cellar"]
+
+    infocuria_only = {}
     for ecli, values_by_key in (infocuria_metadata or {}).items():
-        if ecli not in reconciled:
-            reconciled[ecli] = {
-                key: list(values) for key, values in values_by_key.items()
-            }
+        if ecli in reconciled:
+            target = reconciled[ecli]
+            for key, values in values_by_key.items():
+                if key in INFOCURIA_LOCATOR_FIELDS or (
+                    key not in INFOCURIA_IDENTITY_FIELDS and not target.get(key)
+                ):
+                    target[key] = list(values)
             continue
-        target = reconciled[ecli]
-        for key, values in values_by_key.items():
-            if key in INFOCURIA_IDENTITY_FIELDS or not target.get(key):
-                target[key] = list(values)
+        record = {key: list(values) for key, values in values_by_key.items()}
+        record["identity_source"] = ["infocuria"]
+        infocuria_only[ecli] = record
+
+    celex_users = {}
+    for ecli, record in list(reconciled.items()) + list(infocuria_only.items()):
+        celex = _first_celex(record)
+        if celex:
+            celex_users.setdefault(celex, set()).add(ecli)
+
+    for ecli, record in infocuria_only.items():
+        celex = _first_celex(record)
+        if celex:
+            claimed = celex_users[celex] - {ecli}
+            if not claimed and celex_owners is not None:
+                claimed = set(celex_owners(celex)) - {ecli}
+            if claimed:
+                record.pop("resource_legal_id_celex", None)
+                record.pop("resource_legal_type", None)
+        reconciled[ecli] = record
     return reconciled
+
+
+def get_cellar_celex_owners(celex, max_retries=3):
+    """Return the ECLIs CELLAR binds to works carrying ``celex``."""
+    escaped = celex.replace("\\", "\\\\").replace('"', '\\"')
+    query = f"""
+        prefix cdm: <http://publications.europa.eu/ontology/cdm#>
+        select distinct ?ecli
+        where {{
+            ?doc cdm:resource_legal_id_celex ?celex .
+            FILTER(STR(?celex) = "{escaped}")
+            ?doc cdm:case-law_ecli ?ecli .
+        }}
+    """
+    sparql = SPARQLWrapper("https://publications.europa.eu/webapi/rdf/sparql")
+    sparql.setReturnFormat(JSON)
+    sparql.setMethod(POST)
+    sparql.setTimeout(SPARQL_REQUEST_TIMEOUT_SECONDS)
+    sparql.setQuery(query)
+    result = _query_with_retries(
+        sparql, max_retries, f"Failed to resolve CELLAR owners of {celex}"
+    )
+    return {
+        row["ecli"]["value"]
+        for row in result.get("results", {}).get("bindings", [])
+        if row.get("ecli", {}).get("value")
+    }
 
 
 def get_raw_cellar_metadata_by_celex(

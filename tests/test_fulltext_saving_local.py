@@ -7,7 +7,7 @@ from cellar_extractor import fulltext_saving
 
 
 def _mock_scrapers(monkeypatch):
-    monkeypatch.setattr(fulltext_saving, "get_case_data_by_celex_id", lambda _id, language="EN": None)
+    monkeypatch.setattr(fulltext_saving, "get_case_data_by_celex_id", lambda _id, language="EN", **kwargs: None)
     monkeypatch.setattr(
         fulltext_saving,
         "get_html_text_by_celex_id",
@@ -110,7 +110,7 @@ def test_add_sections_marks_missing_reasons_for_empty_infocuria_fields(monkeypat
     monkeypatch.setattr(
         fulltext_saving,
         "get_case_data_by_celex_id",
-        lambda _id, language="EN": {
+        lambda _id, language="EN", **kwargs: {
             "text": "",
             "html": "",
             "summary": "",
